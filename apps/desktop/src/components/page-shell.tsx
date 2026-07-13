@@ -11,12 +11,24 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
+import { WindowTitleBar } from './window-title-bar';
 
 export function AppLayout() {
+  const isWindows = navigator.userAgent.includes('Windows');
+
   return (
     <div className="relative flex h-screen min-h-0 bg-background text-foreground">
-      <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-40 h-11" />
-      <aside className="flex w-[172px] shrink-0 flex-col border-r border-border bg-muted/40 px-3 pt-12 pb-3 lg:w-56">
+      {isWindows ? (
+        <WindowTitleBar />
+      ) : (
+        <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-40 h-11" />
+      )}
+      <aside
+        className={cn(
+          'flex w-[172px] shrink-0 flex-col border-r border-border bg-muted/40 px-3 pb-3 lg:w-56',
+          isWindows ? 'pt-9' : 'pt-12',
+        )}
+      >
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -52,7 +64,7 @@ export function AppLayout() {
           <NavItem to="/settings" label="应用设置" icon={Settings} />
         </nav>
       </aside>
-      <div className="flex min-w-0 flex-1 flex-col pt-11">
+      <div className={cn('flex min-w-0 flex-1 flex-col', isWindows ? 'pt-8' : 'pt-11')}>
         <div className="min-h-0 flex-1">
           <Outlet />
         </div>
