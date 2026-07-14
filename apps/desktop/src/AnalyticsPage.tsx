@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Area, AreaChart, CartesianGrid, XAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { PageHeader, PageShell } from './components/page-shell';
 import { Alert, AlertDescription, AlertTitle } from './components/ui/alert';
 import { Button } from './components/ui/button';
@@ -60,7 +60,7 @@ const ranges: { value: UsageRange; label: string }[] = [
 ];
 
 const number = new Intl.NumberFormat('zh-CN');
-const compactNumber = new Intl.NumberFormat('zh-CN', {
+const compactNumber = new Intl.NumberFormat('en-US', {
   notation: 'compact',
   maximumFractionDigits: 1,
 });
@@ -270,6 +270,16 @@ function UsageChart({ buckets }: { buckets: UsageBucket[] }) {
         </defs>
         <CartesianGrid vertical={false} />
         <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} minTickGap={32} />
+        <YAxis
+          dataKey="totalTokens"
+          domain={[0, 'auto']}
+          allowDecimals={false}
+          tickFormatter={(value: number) => compactNumber.format(value)}
+          tickLine={false}
+          axisLine={false}
+          tickMargin={8}
+          width="auto"
+        />
         <ChartTooltip
           cursor={false}
           content={
@@ -278,7 +288,7 @@ function UsageChart({ buckets }: { buckets: UsageBucket[] }) {
         />
         <Area
           dataKey="totalTokens"
-          type="natural"
+          type="monotoneX"
           fill="url(#fillTokens)"
           stroke="var(--color-totalTokens)"
         />
