@@ -5,6 +5,7 @@ import {
   createRouter,
 } from '@tanstack/react-router';
 import App from './App';
+import AnalyticsPage from './AnalyticsPage';
 import ConfigPage from './ConfigPage';
 import SessionsPage from './SessionsPage';
 import SettingsPage from './SettingsPage';
@@ -36,8 +37,20 @@ const sessionsRoute = createRoute({
   component: SessionsPage,
 });
 
+const analyticsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/analytics',
+  component: AnalyticsPage,
+});
+
 export const router = createRouter({
-  routeTree: rootRoute.addChildren([indexRoute, sessionsRoute, settingsRoute, configRoute]),
+  routeTree: rootRoute.addChildren([
+    indexRoute,
+    sessionsRoute,
+    analyticsRoute,
+    settingsRoute,
+    configRoute,
+  ]),
   history: createHashHistory(),
 });
 
