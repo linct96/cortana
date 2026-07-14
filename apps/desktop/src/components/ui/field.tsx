@@ -22,10 +22,23 @@ function FieldLabel({ className, ...props }: FieldPrimitive.Label.Props) {
   return (
     <FieldPrimitive.Label
       data-slot="field-label"
-      className={cn('text-sm font-medium group-data-disabled/field:opacity-50', className)}
+      className={cn(
+        'text-sm font-medium group-data-[invalid=true]/field:text-destructive group-data-disabled/field:opacity-50',
+        className,
+      )}
       {...props}
     />
   );
 }
 
-export { Field, FieldGroup, FieldLabel };
+function FieldError({ className, ...props }: FieldPrimitive.Error.Props) {
+  return (
+    <FieldPrimitive.Error
+      data-slot="field-error"
+      className={cn('text-xs text-destructive', className)}
+      {...props}
+    />
+  );
+}
+
+export { Field, FieldError, FieldGroup, FieldLabel };
