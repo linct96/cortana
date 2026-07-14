@@ -4,14 +4,14 @@ import CodeMirror, { EditorView } from '@uiw/react-codemirror';
 import { ArrowLeft, LoaderCircle, Save } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { PageHeader, PageShell } from './components/page-shell';
-import { Badge } from './components/ui/badge';
-import { Button, buttonVariants } from './components/ui/button';
-import { Field, FieldGroup, FieldLabel } from './components/ui/field';
-import { Input } from './components/ui/input';
-import { ConfirmDialog } from './features/prompts/prompt-dialogs';
-import type { AgentsProfile, AgentsStatus } from './features/prompts/types';
-import { appError } from './utils';
+import { PageHeader, PageShell } from '../../components/page-shell';
+import { Badge } from '../../components/ui/badge';
+import { Button, buttonVariants } from '../../components/ui/button';
+import { Field, FieldGroup, FieldLabel } from '../../components/ui/field';
+import { Input } from '../../components/ui/input';
+import { appError } from '../../utils';
+import { ConfirmDialog } from './prompt-dialogs';
+import type { AgentsProfile, AgentsStatus } from './types';
 
 const editorExtensions = [
   EditorView.lineWrapping,

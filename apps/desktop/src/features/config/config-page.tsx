@@ -6,10 +6,10 @@ import { toml } from '@codemirror/legacy-modes/mode/toml';
 import { LoaderCircle, Save, WandSparkles } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { PageHeader, PageShell } from './components/page-shell';
-import { Button } from './components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
-import { appError } from './utils';
+import { PageHeader, PageShell } from '../../components/page-shell';
+import { Button } from '../../components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import { appError } from '../../utils';
 
 type CodexConfigFile = {
   path: string;

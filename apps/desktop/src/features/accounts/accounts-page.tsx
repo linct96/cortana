@@ -11,20 +11,16 @@ import {
   Server,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
-import { PageHeader, PageShell } from './components/page-shell';
-import { Button } from './components/ui/button';
-import { Card, CardContent } from './components/ui/card';
-import { Separator } from './components/ui/separator';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
-import {
-  AddAccountDialog,
-  ConfirmAccountDialog,
-  EditAccountDialog,
-} from './features/accounts/account-dialog';
-import { AccountBalance, AccountRow } from './features/accounts/account-list';
-import { ResetCreditsDialog } from './features/accounts/reset-credits-dialog';
-import type { AuthState } from './features/accounts/types';
-import { useAccountManager } from './features/accounts/use-account-manager';
+import { PageHeader, PageShell } from '../../components/page-shell';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent } from '../../components/ui/card';
+import { Separator } from '../../components/ui/separator';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import { AddAccountDialog, ConfirmAccountDialog, EditAccountDialog } from './account-dialog';
+import { AccountBalance, AccountRow } from './account-list';
+import { ResetCreditsDialog } from './reset-credits-dialog';
+import type { AuthState } from './types';
+import { useAccountManager } from './use-account-manager';
 
 const statusStyles: Record<
   AuthState['kind'],
@@ -36,7 +32,7 @@ const statusStyles: Record<
   missing: { icon: CircleAlert, iconClass: 'bg-secondary text-secondary-foreground' },
 };
 
-export default function App() {
+export default function AccountsPage() {
   const account = useAccountManager();
 
   return (

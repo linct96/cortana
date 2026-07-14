@@ -2,10 +2,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts';
-import { PageHeader, PageShell } from './components/page-shell';
-import { Alert, AlertDescription, AlertTitle } from './components/ui/alert';
-import { Button } from './components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
+import { PageHeader, PageShell } from '../../components/page-shell';
+import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
   ChartContainer,
   ChartLegend,
@@ -13,11 +13,11 @@ import {
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
-} from './components/ui/chart';
-import { Progress } from './components/ui/progress';
-import { ToggleGroup, ToggleGroupItem } from './components/ui/toggle-group';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
-import { appError } from './utils';
+} from '../../components/ui/chart';
+import { Progress } from '../../components/ui/progress';
+import { ToggleGroup, ToggleGroupItem } from '../../components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import { appError } from '../../utils';
 
 type UsageRange = 'today' | '7d' | '30d' | 'all';
 

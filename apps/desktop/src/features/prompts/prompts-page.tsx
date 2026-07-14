@@ -13,20 +13,20 @@ import {
 } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { PageHeader, PageShell } from './components/page-shell';
-import { Alert, AlertAction, AlertDescription, AlertTitle } from './components/ui/alert';
-import { Badge } from './components/ui/badge';
-import { Button, buttonVariants } from './components/ui/button';
+import { PageHeader, PageShell } from '../../components/page-shell';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '../../components/ui/alert';
+import { Badge } from '../../components/ui/badge';
+import { Button, buttonVariants } from '../../components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from './components/ui/dropdown-menu';
-import { ConfirmDialog, NameDialogForm } from './features/prompts/prompt-dialogs';
-import type { AgentsProfile, AgentsStatus } from './features/prompts/types';
-import { appError, cn } from './utils';
+} from '../../components/ui/dropdown-menu';
+import { appError, cn } from '../../utils';
+import { ConfirmDialog, NameDialogForm } from './prompt-dialogs';
+import type { AgentsProfile, AgentsStatus } from './types';
 
 export default function PromptsPage() {
   return (

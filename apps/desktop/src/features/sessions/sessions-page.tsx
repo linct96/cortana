@@ -2,9 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { LoaderCircle, MessageSquare, RefreshCw, Search, TriangleAlert } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { PageHeader, PageShell } from './components/page-shell';
-import { Alert, AlertAction, AlertDescription, AlertTitle } from './components/ui/alert';
-import { Button } from './components/ui/button';
+import { PageHeader, PageShell } from '../../components/page-shell';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
 import {
   Dialog,
   DialogClose,
@@ -13,17 +13,17 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from './components/ui/dialog';
+} from '../../components/ui/dialog';
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from './components/ui/input-group';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
-import { SessionRow, type CodexSession } from './features/sessions/session-row';
-import { appError } from './utils';
+} from '../../components/ui/input-group';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import { appError } from '../../utils';
+import { SessionRow, type CodexSession } from './session-row';
 
 type CodexSessionPage = {
   sessions: CodexSession[];

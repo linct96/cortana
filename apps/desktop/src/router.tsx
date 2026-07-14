@@ -5,25 +5,34 @@ import {
   createRouter,
   lazyRouteComponent,
 } from '@tanstack/react-router';
-import App from './App';
 import { AppLayout } from './components/page-shell';
+import AccountsPage from './features/accounts/accounts-page';
 
-const AnalyticsPage = lazyRouteComponent(() => import('./AnalyticsPage'));
-const BillingPage = lazyRouteComponent(() => import('./BillingPage'));
-const ConfigPage = lazyRouteComponent(() => import('./ConfigPage'));
-const PromptsPage = lazyRouteComponent(() => import('./PromptsPage'));
-const NewPromptPage = lazyRouteComponent(() => import('./PromptEditorPage'), 'NewPromptPage');
-const EditPromptPage = lazyRouteComponent(() => import('./PromptEditorPage'), 'EditPromptPage');
-const SessionsPage = lazyRouteComponent(() => import('./SessionsPage'));
-const SettingsPage = lazyRouteComponent(() => import('./SettingsPage'));
-const AboutPage = lazyRouteComponent(() => import('./SettingsPage'), 'AboutPage');
+const AnalyticsPage = lazyRouteComponent(() => import('./features/analytics/analytics-page'));
+const BillingPage = lazyRouteComponent(() => import('./features/billing/billing-page'));
+const ConfigPage = lazyRouteComponent(() => import('./features/config/config-page'));
+const PromptsPage = lazyRouteComponent(() => import('./features/prompts/prompts-page'));
+const NewPromptPage = lazyRouteComponent(
+  () => import('./features/prompts/prompt-editor-page'),
+  'NewPromptPage',
+);
+const EditPromptPage = lazyRouteComponent(
+  () => import('./features/prompts/prompt-editor-page'),
+  'EditPromptPage',
+);
+const SessionsPage = lazyRouteComponent(() => import('./features/sessions/sessions-page'));
+const SettingsPage = lazyRouteComponent(() => import('./features/settings/settings-page'));
+const AboutPage = lazyRouteComponent(
+  () => import('./features/settings/settings-page'),
+  'AboutPage',
+);
 
 const rootRoute = createRootRoute({ component: AppLayout });
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  component: App,
+  component: AccountsPage,
 });
 
 const settingsRoute = createRoute({

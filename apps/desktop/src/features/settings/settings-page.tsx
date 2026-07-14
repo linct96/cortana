@@ -2,17 +2,17 @@ import { invoke } from '@tauri-apps/api/core';
 import { Check, FolderOpen, LoaderCircle } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { PageHeader, PageShell } from './components/page-shell';
-import { Button } from './components/ui/button';
+import { PageHeader, PageShell } from '../../components/page-shell';
+import { Button } from '../../components/ui/button';
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from './components/ui/input-group';
-import { Switch } from './components/ui/switch';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
-import { appError, authFileParent } from './utils';
+} from '../../components/ui/input-group';
+import { Switch } from '../../components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import { appError, authFileParent } from '../../utils';
 
 type AppStatus = {
   authPath: string;
