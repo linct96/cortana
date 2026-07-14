@@ -2,7 +2,7 @@ import { Link, useBlocker, useNavigate, useParams } from '@tanstack/react-router
 import { invoke } from '@tauri-apps/api/core';
 import CodeMirror, { EditorView } from '@uiw/react-codemirror';
 import { ArrowLeft, LoaderCircle, Save } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { PageHeader, PageShell } from '../../components/page-shell';
 import { Badge } from '../../components/ui/badge';
@@ -50,6 +50,7 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
   const [savedContent, setSavedContent] = useState('');
   const [busy, setBusy] = useState(Boolean(profileId));
   const [forceSave, setForceSave] = useState(false);
+  const requestId = useRef(0);
   const dirty = name !== savedName || content !== savedContent;
   const blocker = useBlocker({
     shouldBlockFn: useCallback(() => dirty, [dirty]),
@@ -58,10 +59,12 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
   });
 
   useEffect(() => {
+    if (!profileId) return;
+    const currentRequest = ++requestId.current;
     setBusy(true);
     invoke<AgentsStatus>('get_agents_status')
       .then((status) => {
-        if (!profileId) return;
+        if (currentRequest !== requestId.current) return;
         const next = status.profiles.find((item) => item.id === profileId);
         if (!next) throw new Error('提示词方案不存在。');
         setProfile(next);
@@ -70,8 +73,15 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
         setSavedName(next.name);
         setSavedContent(next.content);
       })
-      .catch((error) => toast.error(appError(error)))
-      .finally(() => setBusy(false));
+      .catch((error) => {
+        if (currentRequest === requestId.current) toast.error(appError(error));
+      })
+      .finally(() => {
+        if (currentRequest === requestId.current) setBusy(false);
+      });
+    return () => {
+      requestId.current += 1;
+    };
   }, [profileId]);
 
   async function save(event?: FormEvent, force = false) {

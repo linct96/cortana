@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { PageHeader, PageShell } from '../../components/page-shell';
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
@@ -20,6 +20,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/too
 import { appError } from '../../utils';
 
 type UsageRange = 'today' | '7d' | '30d' | 'all';
+
+const defaultRange: UsageRange = 'today';
 
 type TokenUsage = {
   inputTokens: number;
@@ -79,31 +81,35 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 export default function AnalyticsPage() {
-  const [range, setRange] = useState<UsageRange>('today');
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [range, setRange] = useState<UsageRange>(defaultRange);
   const [analytics, setAnalytics] = useState<UsageAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const requestId = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const refresh = useCallback(async (targetRange: UsageRange) => {
+    const currentRequest = ++requestId.current;
     setLoading(true);
     setError(null);
     setAnalytics(null);
-    invoke<UsageAnalytics>('get_codex_usage_analytics', { range })
-      .then((result) => {
-        if (!cancelled) setAnalytics(result);
-      })
-      .catch((caught) => {
-        if (!cancelled) setError(appError(caught));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+    try {
+      const result = await invoke<UsageAnalytics>('get_codex_usage_analytics', {
+        range: targetRange,
       });
+      if (currentRequest === requestId.current) setAnalytics(result);
+    } catch (caught) {
+      if (currentRequest === requestId.current) setError(appError(caught));
+    } finally {
+      if (currentRequest === requestId.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh(defaultRange);
     return () => {
-      cancelled = true;
+      requestId.current += 1;
     };
-  }, [range, refreshKey]);
+  }, [refresh]);
 
   return (
     <PageShell>
@@ -119,7 +125,9 @@ export default function AnalyticsPage() {
               aria-label="统计时间范围"
               onValueChange={(values) => {
                 const next = values[0] as UsageRange | undefined;
-                if (next) setRange(next);
+                if (!next || next === range) return;
+                setRange(next);
+                void refresh(next);
               }}
             >
               {ranges.map((item) => (
@@ -134,7 +142,7 @@ export default function AnalyticsPage() {
                   variant="ghost"
                   size="icon"
                   type="button"
-                  onClick={() => setRefreshKey((current) => current + 1)}
+                  onClick={() => void refresh(range)}
                   disabled={loading}
                 >
                   <RefreshCw className={loading ? 'animate-spin' : ''} />

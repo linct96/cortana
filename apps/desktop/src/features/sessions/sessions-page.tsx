@@ -48,7 +48,7 @@ export default function SessionsPage() {
   const requestId = useRef(0);
 
   const loadSessions = useCallback(
-    async (cursor: string | null = null) => {
+    async (targetArchived: boolean, targetSearchTerm: string, cursor: string | null = null) => {
       const append = cursor !== null;
       const currentRequest = ++requestId.current;
       setLoading(append ? 'more' : 'list');
@@ -56,8 +56,8 @@ export default function SessionsPage() {
       try {
         const page = await invoke<CodexSessionPage>('list_codex_sessions', {
           cursor,
-          archived,
-          searchTerm: searchTerm || null,
+          archived: targetArchived,
+          searchTerm: targetSearchTerm || null,
         });
         if (currentRequest !== requestId.current) return;
         setSessions((current) => (append ? [...current, ...page.sessions] : page.sessions));
@@ -71,20 +71,33 @@ export default function SessionsPage() {
         if (currentRequest === requestId.current) setLoading(null);
       }
     },
-    [archived, searchTerm],
+    [],
   );
 
   useEffect(() => {
+    void loadSessions(false, '');
+    return () => {
+      requestId.current += 1;
+    };
+  }, [loadSessions]);
+
+  function startQuery(targetArchived: boolean, targetSearchTerm: string) {
     setSessions([]);
     setNextCursor(null);
-    void loadSessions();
-  }, [loadSessions]);
+    void loadSessions(targetArchived, targetSearchTerm);
+  }
+
+  function changeArchived(next: boolean) {
+    if (next === archived) return;
+    setArchived(next);
+    startQuery(next, searchTerm);
+  }
 
   function submitSearch(event: FormEvent) {
     event.preventDefault();
     const next = query.trim();
-    if (next === searchTerm) void loadSessions();
-    else setSearchTerm(next);
+    if (next !== searchTerm) setSearchTerm(next);
+    startQuery(archived, next);
   }
 
   async function moveSession(session: CodexSession) {
@@ -149,7 +162,7 @@ export default function SessionsPage() {
                 variant="ghost"
                 size="icon"
                 type="button"
-                onClick={() => void loadSessions()}
+                onClick={() => void loadSessions(archived, searchTerm)}
                 disabled={loading === 'list'}
               >
                 <RefreshCw className={loading === 'list' ? 'animate-spin' : ''} />
@@ -170,10 +183,10 @@ export default function SessionsPage() {
         busyId={busyId}
         error={error}
         dialog={dialog}
-        onArchivedChange={setArchived}
+        onArchivedChange={changeArchived}
         onQueryChange={setQuery}
         onSearch={submitSearch}
-        onLoad={loadSessions}
+        onLoad={(cursor) => loadSessions(archived, searchTerm, cursor)}
         onMove={moveSession}
         onDialogChange={setDialog}
         onRename={renameSession}
