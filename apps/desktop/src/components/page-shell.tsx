@@ -42,7 +42,7 @@ export function AppLayout() {
       )}
       <aside
         className={cn(
-          'flex w-[172px] shrink-0 flex-col border-r border-border bg-muted/40 px-3 pb-3 lg:w-56',
+          'flex w-[172px] shrink-0 flex-col border-r border-border bg-muted/40 px-3 pb-2 lg:w-56',
           isWindows ? 'pt-9' : 'pt-12',
         )}
       >
@@ -53,9 +53,9 @@ export function AppLayout() {
               className="flex h-9 items-center gap-2 rounded-md px-2 outline-none transition-colors hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
             >
               <ArrowLeft className="size-4 shrink-0" />
-              <strong className="truncate text-base font-semibold">应用设置</strong>
+              <strong className="truncate text-base font-semibold">设置</strong>
             </Link>
-            <nav className="mt-3 flex flex-1 flex-col gap-1" aria-label="应用设置导航">
+            <nav className="mt-3 flex flex-1 flex-col gap-1" aria-label="设置导航">
               <NavItem to="/settings" label="常规" icon={SlidersHorizontal} exact />
               <NavItem to="/settings/billing" label="计费" icon={CreditCard} />
               <NavItem to="/settings/about" label="关于" icon={Info} />
@@ -96,8 +96,8 @@ export function AppLayout() {
               <NavItem to="/analytics" label="统计分析" icon={ChartNoAxesCombined} />
               <NavItem to="/config" label="Codex 配置" icon={FileCog} />
             </nav>
-            <nav className="border-t border-border pt-3" aria-label="应用导航">
-              <NavItem to="/settings" label="应用设置" icon={Settings} />
+            <nav className="border-t border-border pt-2" aria-label="应用导航">
+              <NavItem to="/settings" label="设置" icon={Settings} />
             </nav>
           </>
         )}

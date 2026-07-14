@@ -13,11 +13,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from './components/ui/dialog';
-import { Field, FieldGroup, FieldLabel } from './components/ui/field';
+import { Field, FieldError, FieldGroup, FieldLabel } from './components/ui/field';
 import { Input } from './components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from './components/ui/input-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 import { ModelsDevDialog } from './features/billing/models-dev-dialog';
-import { emptyPricing, type ModelPricing } from './features/billing/types';
+import {
+  emptyPricing,
+  type ModelPricing,
+  type PricingErrors,
+  validatePricing,
+} from './features/billing/types';
 import { appError } from './utils';
 
 const priceFields = [
@@ -223,10 +229,24 @@ function PricingEditor({
   onSaved: () => Promise<void>;
 }) {
   const [form, setForm] = useState(model);
+  const [errors, setErrors] = useState<PricingErrors>({});
   const [saving, setSaving] = useState(false);
+
+  function updateField<Key extends keyof ModelPricing>(key: Key, value: ModelPricing[Key]) {
+    const nextForm = { ...form, [key]: value };
+    setForm(nextForm);
+    if (Object.keys(errors).length) setErrors(validatePricing(nextForm));
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    const nextErrors = validatePricing(form);
+    setErrors(nextErrors);
+    const firstInvalid = Object.keys(nextErrors)[0];
+    if (firstInvalid) {
+      event.currentTarget.querySelector<HTMLElement>(`[name="${firstInvalid}"]`)?.focus();
+      return;
+    }
     setSaving(true);
     try {
       await invoke('save_model_pricing', { items: [form] });
@@ -248,47 +268,54 @@ function PricingEditor({
       >
         <DialogHeader>
           <DialogTitle>{isNew ? '新增定价' : `编辑定价 · ${model.displayName}`}</DialogTitle>
-          <DialogDescription>价格单位为 USD / 百万 Token</DialogDescription>
         </DialogHeader>
-        <form onSubmit={submit} className="flex flex-col gap-4">
+        <form noValidate onSubmit={submit} className="flex flex-col gap-4">
           <FieldGroup>
-            <Field>
+            <Field data-invalid={Boolean(errors.modelId)}>
               <FieldLabel htmlFor="pricing-model-id">模型 ID</FieldLabel>
               <Input
                 id="pricing-model-id"
+                name="modelId"
                 value={form.modelId}
-                onChange={(event) => setForm({ ...form, modelId: event.target.value })}
+                onChange={(event) => updateField('modelId', event.target.value)}
                 placeholder="gpt-5.4"
                 disabled={!isNew || saving}
-                required
+                aria-invalid={Boolean(errors.modelId)}
               />
+              {errors.modelId && <FieldError match>{errors.modelId}</FieldError>}
             </Field>
-            <Field>
+            <Field data-invalid={Boolean(errors.displayName)}>
               <FieldLabel htmlFor="pricing-display-name">显示名称</FieldLabel>
               <Input
                 id="pricing-display-name"
+                name="displayName"
                 value={form.displayName}
-                onChange={(event) => setForm({ ...form, displayName: event.target.value })}
+                onChange={(event) => updateField('displayName', event.target.value)}
                 placeholder="GPT-5.4"
                 disabled={saving}
-                required
+                aria-invalid={Boolean(errors.displayName)}
               />
+              {errors.displayName && <FieldError match>{errors.displayName}</FieldError>}
             </Field>
             <div className="grid grid-cols-2 gap-4">
               {priceFields.map(([key, label]) => (
-                <Field key={key}>
+                <Field key={key} data-invalid={Boolean(errors[key])}>
                   <FieldLabel htmlFor={`pricing-${key}`}>{label}</FieldLabel>
-                  <Input
-                    id={`pricing-${key}`}
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="any"
-                    value={form[key]}
-                    onChange={(event) => setForm({ ...form, [key]: event.target.value })}
-                    disabled={saving}
-                    required
-                  />
+                  <InputGroup>
+                    <InputGroupAddon>$</InputGroupAddon>
+                    <InputGroupInput
+                      id={`pricing-${key}`}
+                      name={key}
+                      type="number"
+                      inputMode="decimal"
+                      step="any"
+                      value={form[key]}
+                      onChange={(event) => updateField(key, event.target.value)}
+                      disabled={saving}
+                      aria-invalid={Boolean(errors[key])}
+                    />
+                  </InputGroup>
+                  {errors[key] && <FieldError match>{errors[key]}</FieldError>}
                 </Field>
               ))}
             </div>
