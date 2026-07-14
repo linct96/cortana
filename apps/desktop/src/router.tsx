@@ -3,14 +3,17 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
 } from '@tanstack/react-router';
 import App from './App';
-import AnalyticsPage from './AnalyticsPage';
-import BillingPage from './BillingPage';
-import ConfigPage from './ConfigPage';
-import SessionsPage from './SessionsPage';
-import SettingsPage, { AboutPage } from './SettingsPage';
 import { AppLayout } from './components/page-shell';
+
+const AnalyticsPage = lazyRouteComponent(() => import('./AnalyticsPage'));
+const BillingPage = lazyRouteComponent(() => import('./BillingPage'));
+const ConfigPage = lazyRouteComponent(() => import('./ConfigPage'));
+const SessionsPage = lazyRouteComponent(() => import('./SessionsPage'));
+const SettingsPage = lazyRouteComponent(() => import('./SettingsPage'));
+const AboutPage = lazyRouteComponent(() => import('./SettingsPage'), 'AboutPage');
 
 const rootRoute = createRootRoute({ component: AppLayout });
 
