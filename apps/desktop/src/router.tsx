@@ -6,9 +6,10 @@ import {
 } from '@tanstack/react-router';
 import App from './App';
 import AnalyticsPage from './AnalyticsPage';
+import BillingPage from './BillingPage';
 import ConfigPage from './ConfigPage';
 import SessionsPage from './SessionsPage';
-import SettingsPage, { AboutPage, BillingPage } from './SettingsPage';
+import SettingsPage, { AboutPage } from './SettingsPage';
 import { AppLayout } from './components/page-shell';
 
 const rootRoute = createRootRoute({ component: AppLayout });

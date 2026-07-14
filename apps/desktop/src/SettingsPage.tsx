@@ -138,14 +138,6 @@ export default function SettingsPage() {
   );
 }
 
-export function BillingPage() {
-  return (
-    <PageShell>
-      <PageHeader title="计费" />
-    </PageShell>
-  );
-}
-
 export function AboutPage() {
   return (
     <PageShell>
