@@ -1,7 +1,7 @@
 # OpenAI 接口清单
 
 本文记录本项目当前直接调用的 OpenAI/ChatGPT 接口。清单基于
-实现位于 `src-tauri/src/accounts.rs`、`codex.rs` 和 `oauth.rs`，最后核对日期为 2026-07-10。
+实现位于 `src-tauri/src/accounts.rs`、`codex.rs` 和 `oauth.rs`，最后核对日期为 2026-07-14。
 
 ## 概览
 
@@ -10,6 +10,7 @@
 | `https://auth.openai.com/oauth/authorize` | `GET` | 在浏览器中完成 Codex OAuth 授权 | OpenAI 登录端点；具体 Codex 参数未形成公开 API 合约 |
 | `https://auth.openai.com/oauth/token` | `POST` | 使用授权码和 PKCE verifier 换取令牌 | OpenAI 登录端点；具体 Codex 参数未形成公开 API 合约 |
 | `https://chatgpt.com/backend-api/wham/usage` | `GET` | 查询套餐、额度窗口和积分余额 | ChatGPT 内部接口，未见公开 API 文档，可能变更 |
+| `https://chatgpt.com/backend-api/wham/rate-limit-reset-credits` | `GET` | 查询 Banked Rate-Limit Resets | ChatGPT 内部接口，未见公开 API 文档，可能变更 |
 
 本项目目前不调用 `https://api.openai.com/v1/*` 下的公开模型 API。OpenAI 官方资料确认
 Codex 支持使用 ChatGPT 账户登录，并会把认证信息保存在本地；但没有公开承诺本文所列端点
@@ -130,6 +131,43 @@ User-Agent: codex_cli_rs
 
 > 注意：`/backend-api/wham/usage` 是 ChatGPT Web 后端接口，不是 OpenAI 公开开发者 API。
 > 调用方式和字段均应视为可变实现细节；升级前应使用真实账户重新验证。
+
+## Banked Rate-Limit Resets
+
+```http
+GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits
+Authorization: Bearer <access_token>
+ChatGPT-Account-ID: <account_id>
+Accept: application/json
+User-Agent: codex_cli_rs
+```
+
+2026-07-14 使用 Team 账户实际请求得到的响应结构：
+
+```json
+{
+  "credits": [
+    {
+      "id": "RateLimitResetCredit_<id>",
+      "reset_type": "codex_rate_limits",
+      "status": "available",
+      "granted_at": "2026-07-13T18:00:29.147751Z",
+      "expires_at": "2026-08-12T18:00:29.147751Z",
+      "redeem_started_at": null,
+      "redeemed_at": null,
+      "profile_image_url": "https://openaiassets.blob.core.windows.net/$web/codex/codex-icon-200.png",
+      "profile_user_id": "Codex Team",
+      "title": "Full reset",
+      "description": "Thanks for using Codex! You've been granted one free rate limit reset."
+    }
+  ],
+  "available_count": 3,
+  "total_earned_count": 0
+}
+```
+
+项目当前使用 `available_count` 展示可用次数，并在明细中展示 `id`、`status`、
+`granted_at` 和 `expires_at`。本项目只调用上述查询接口，不调用重置卡兑换接口。
 
 ## 身份声明
 

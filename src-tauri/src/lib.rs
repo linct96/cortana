@@ -127,6 +127,7 @@ pub fn run() {
             oauth::import_auth_json,
             accounts::add_relay_profile,
             accounts::refresh_profile_usage,
+            accounts::get_profile_reset_credits,
             accounts::get_profile_auth,
             accounts::update_profile,
             accounts::update_relay_profile,

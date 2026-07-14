@@ -69,6 +69,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
               credits_balance TEXT,
               credits_unlimited INTEGER NOT NULL DEFAULT 0,
               usage_updated_at INTEGER,
+              reset_credits_available_count INTEGER,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL,
               last_used_at INTEGER,
@@ -94,6 +95,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
         ("credits_balance", "TEXT"),
         ("credits_unlimited", "INTEGER NOT NULL DEFAULT 0"),
         ("usage_updated_at", "INTEGER"),
+        ("reset_credits_available_count", "INTEGER"),
     ] {
         ensure_account_column(&connection, name, definition)?;
     }

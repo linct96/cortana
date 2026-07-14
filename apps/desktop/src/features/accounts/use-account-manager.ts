@@ -4,7 +4,14 @@ import type { FormEvent } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { appError } from '../../utils';
-import type { AddMode, AppStatus, OAuthProgress, PendingConfirm, Profile } from './types';
+import type {
+  AddMode,
+  AppStatus,
+  OAuthProgress,
+  PendingConfirm,
+  Profile,
+  ResetCredits,
+} from './types';
 
 export function useAccountManager() {
   const [status, setStatus] = useState<AppStatus | null>(null);
@@ -25,6 +32,8 @@ export function useAccountManager() {
   const [editingRelayApiBaseUrl, setEditingRelayApiBaseUrl] = useState('');
   const [showEditingRelayApiKey, setShowEditingRelayApiKey] = useState(false);
   const [confirm, setConfirm] = useState<PendingConfirm>(null);
+  const [resetCreditsProfile, setResetCreditsProfile] = useState<Profile | null>(null);
+  const [resetCredits, setResetCredits] = useState<ResetCredits | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -115,6 +124,35 @@ export function useAccountManager() {
       await refresh();
     } catch (error) {
       toast.error(appError(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function viewResetCredits(profile: Profile) {
+    setResetCreditsProfile(profile);
+    setResetCredits(null);
+    setBusy(`reset-credits:${profile.id}`);
+    try {
+      const result = await invoke<ResetCredits>('get_profile_reset_credits', {
+        profileId: profile.id,
+      });
+      setResetCredits(result);
+      setStatus((current) =>
+        current
+          ? {
+              ...current,
+              profiles: current.profiles.map((item) =>
+                item.id === profile.id
+                  ? { ...item, resetCreditsAvailableCount: result.availableCount }
+                  : item,
+              ),
+            }
+          : current,
+      );
+    } catch (error) {
+      toast.error(appError(error));
+      setResetCreditsProfile(null);
     } finally {
       setBusy(null);
     }
@@ -278,6 +316,8 @@ export function useAccountManager() {
     editingRelayApiBaseUrl,
     showEditingRelayApiKey,
     confirm,
+    resetCreditsProfile,
+    resetCredits,
     activeProfile,
     setAddOpen,
     setAddMode,
@@ -292,12 +332,14 @@ export function useAccountManager() {
     setEditingRelayApiBaseUrl,
     setShowEditingRelayApiKey,
     setConfirm,
+    setResetCreditsProfile,
     refresh,
     closeAddDialog,
     closeEditor,
     cancelOAuth,
     refreshAllAccounts,
     refreshAccount,
+    viewResetCredits,
     switchTo,
     importCurrent,
     submitAdd,

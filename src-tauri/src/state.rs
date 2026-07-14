@@ -9,6 +9,8 @@ pub(super) const OAUTH_SCOPE: &str =
 pub(super) const OAUTH_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 pub(super) const MAX_IMPORTED_AUTH_JSON_BYTES: usize = 1024 * 1024;
 pub(super) const ACCOUNT_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+pub(super) const RESET_CREDITS_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 pub(super) const TRAY_ID: &str = "account-switcher";
 pub(super) const ACCOUNT_TYPE_OAUTH: &str = "oauth";
 pub(super) const ACCOUNT_TYPE_RELAY: &str = "relay";
@@ -48,9 +50,26 @@ pub(super) struct ProfileSummary {
     pub(super) credits_balance: Option<String>,
     pub(super) credits_unlimited: bool,
     pub(super) usage_updated_at: Option<i64>,
+    pub(super) reset_credits_available_count: Option<i64>,
     pub(super) is_active: bool,
     pub(super) last_used_at: Option<i64>,
     pub(super) updated_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ResetCredits {
+    pub(super) available_count: i64,
+    pub(super) credits: Vec<ResetCredit>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ResetCredit {
+    pub(super) id: String,
+    pub(super) status: String,
+    pub(super) expires_at: String,
+    pub(super) granted_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

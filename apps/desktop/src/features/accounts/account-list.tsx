@@ -6,8 +6,10 @@ import {
   LoaderCircle,
   Pencil,
   RefreshCw,
+  RotateCcw,
   Trash2,
 } from 'lucide-react';
+import { Fragment } from 'react';
 import chatGptIcon from '../../assets/chatgpt.svg';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -19,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from '../../components/ui/dropdown-menu';
 import { Progress, ProgressLabel, ProgressValue } from '../../components/ui/progress';
+import { Separator } from '../../components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { cn, formatResetTime } from '../../utils';
 import type { Profile, UsageWindow } from './types';
@@ -31,6 +34,7 @@ export function AccountRow({
   onSwitch,
   onRefresh,
   onEdit,
+  onViewResetCredits,
   onDelete,
 }: {
   profile: Profile;
@@ -40,6 +44,7 @@ export function AccountRow({
   onSwitch: () => void;
   onRefresh: () => void;
   onEdit: () => void;
+  onViewResetCredits: () => void;
   onDelete: () => void;
 }) {
   const sortable = useSortable({
@@ -83,22 +88,7 @@ export function AccountRow({
           {profile.planType && <Badge variant="outline">{planLabel(profile.planType)}</Badge>}
           {profile.isActive && <Badge>使用中</Badge>}
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          {profile.accountType === 'relay' ? (
-            <span className="min-w-0 max-w-full truncate">{profile.apiBaseUrl}</span>
-          ) : (
-            profile.usagePrimary && <UsageMetric window={profile.usagePrimary} />
-          )}
-          {profile.accountType === 'oauth' && profile.usageSecondary && (
-            <UsageMetric window={profile.usageSecondary} />
-          )}
-          {profile.accountType === 'oauth' && profile.creditsUnlimited ? (
-            <span>积分不限量</span>
-          ) : profile.accountType === 'oauth' && profile.creditsBalance ? (
-            <span>积分 {profile.creditsBalance}</span>
-          ) : null}
-          {profile.accountType === 'oauth' && !profile.usageUpdatedAt && <span>额度未查询</span>}
-        </div>
+        <AccountMeta profile={profile} />
       </div>
       <div className="pointer-events-none flex min-w-25 justify-end gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
         {!profile.isActive && (
@@ -123,9 +113,16 @@ export function AccountRow({
                 <Pencil /> 编辑
               </DropdownMenuItem>
               {profile.accountType === 'oauth' && (
-                <DropdownMenuItem onClick={onRefresh} disabled={isRefreshing}>
-                  <RefreshCw className={isRefreshing ? 'animate-spin' : ''} /> 刷新
-                </DropdownMenuItem>
+                <>
+                  <DropdownMenuItem onClick={onRefresh} disabled={isRefreshing}>
+                    <RefreshCw className={isRefreshing ? 'animate-spin' : ''} /> 刷新
+                  </DropdownMenuItem>
+                  {profile.planType.trim() && profile.planType.trim().toLowerCase() !== 'free' ? (
+                    <DropdownMenuItem onClick={onViewResetCredits}>
+                      <RotateCcw /> 查看重置
+                    </DropdownMenuItem>
+                  ) : null}
+                </>
               )}
               <DropdownMenuItem variant="destructive" onClick={onDelete}>
                 <Trash2 /> 删除
@@ -205,13 +202,52 @@ export function AccountBalance({
   );
 }
 
-function UsageMetric({ window }: { window: UsageWindow }) {
-  const remaining = remainingPercent(window);
+function AccountMeta({ profile }: { profile: Profile }) {
+  const items: { key: string; label: string; destructive?: boolean }[] = [];
+  if (profile.accountType === 'relay') {
+    if (profile.apiBaseUrl) items.push({ key: 'api', label: profile.apiBaseUrl });
+  } else {
+    [profile.usagePrimary, profile.usageSecondary].forEach((window, index) => {
+      if (!window) return;
+      const remaining = remainingPercent(window);
+      items.push({
+        key: `usage-${index}`,
+        label: `${remaining}% 剩余`,
+        destructive: remaining <= 10,
+      });
+      if (window.resetsAt !== null) {
+        items.push({ key: `reset-${index}`, label: `${formatResetTime(window.resetsAt)}重置` });
+      }
+    });
+    if (profile.resetCreditsAvailableCount !== null) {
+      items.push({
+        key: 'reset-credits',
+        label: `${profile.resetCreditsAvailableCount}次可用重置`,
+      });
+    }
+    if (profile.creditsUnlimited) items.push({ key: 'credits', label: '积分不限量' });
+    else if (profile.creditsBalance) {
+      items.push({ key: 'credits', label: `积分 ${profile.creditsBalance}` });
+    }
+    if (!profile.usageUpdatedAt) items.push({ key: 'empty', label: '额度未查询' });
+  }
+
   return (
-    <span className={remaining <= 10 ? 'text-destructive' : ''}>
-      {Math.round(remaining)}% 剩余
-      {window.resetsAt ? ` · ${formatResetTime(window.resetsAt)}重置` : ''}
-    </span>
+    <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-y-1 text-xs text-muted-foreground">
+      {items.map((item, index) => (
+        <Fragment key={item.key}>
+          {index > 0 && (
+            <Separator
+              orientation="vertical"
+              className="mx-2 h-3 w-px self-center bg-muted-foreground/30"
+            />
+          )}
+          <span className={cn('min-w-0 truncate', item.destructive && 'text-destructive')}>
+            {item.label}
+          </span>
+        </Fragment>
+      ))}
+    </div>
   );
 }
 
