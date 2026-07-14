@@ -106,7 +106,7 @@ export default function ConfigPage() {
 
   return (
     <PageShell className="flex flex-col">
-      <PageHeader title="Codex 配置" className="shrink-0 pb-7" />
+      <PageHeader title="Codex 配置" />
 
       <form
         className="flex min-h-0 w-full flex-1 flex-col gap-3 px-4 pb-6 sm:px-8 sm:pb-7 lg:px-12"

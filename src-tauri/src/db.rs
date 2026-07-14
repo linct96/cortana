@@ -18,6 +18,13 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
               cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
               cache_write_cost_per_million TEXT NOT NULL DEFAULT '0'
             );
+            CREATE TABLE IF NOT EXISTS agents_profiles (
+              id TEXT PRIMARY KEY NOT NULL,
+              name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+              content TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
             ",
         )
         .map_err(database_error)?;

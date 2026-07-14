@@ -7,6 +7,7 @@ import {
   CreditCard,
   FileCog,
   Info,
+  FileText,
   MessagesSquare,
   Settings,
   SlidersHorizontal,
@@ -31,7 +32,10 @@ export function AppLayout() {
   const isSettings = pathname === '/settings' || pathname.startsWith('/settings/');
   const previousAppPath = useRef<MainPath>('/');
 
-  if (!isSettings) previousAppPath.current = pathname as MainPath;
+  if (!isSettings)
+    previousAppPath.current = pathname.startsWith('/prompts/')
+      ? '/prompts'
+      : (pathname as MainPath);
 
   return (
     <div className="relative flex h-screen min-h-0 bg-background text-foreground">
@@ -92,8 +96,9 @@ export function AppLayout() {
             </DropdownMenu>
             <nav className="mt-3 flex flex-1 flex-col gap-1" aria-label="主导航">
               <NavItem to="/" label="账号" icon={UsersRound} exact />
-              <NavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
               <NavItem to="/analytics" label="统计分析" icon={ChartNoAxesCombined} />
+              <NavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
+              <NavItem to="/prompts" label="提示词管理" icon={FileText} />
               <NavItem to="/config" label="Codex 配置" icon={FileCog} />
             </nav>
             <nav className="border-t border-border pt-2" aria-label="应用导航">
@@ -111,7 +116,7 @@ export function AppLayout() {
   );
 }
 
-type MainPath = '/' | '/sessions' | '/analytics' | '/config';
+type MainPath = '/' | '/sessions' | '/analytics' | '/prompts' | '/config';
 
 type AppPath = MainPath | '/settings' | '/settings/billing' | '/settings/about';
 
@@ -163,7 +168,7 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        'flex w-full items-center justify-between gap-4 px-4 pt-6 sm:px-8 sm:pt-7 lg:px-12',
+        'flex w-full items-center justify-between gap-4 px-4 sm:px-8 lg:px-12',
         className,
       )}
     >
