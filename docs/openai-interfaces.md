@@ -166,8 +166,8 @@ User-Agent: codex_cli_rs
 }
 ```
 
-项目当前使用 `available_count` 展示可用次数，并在明细中展示 `id`、`status`、
-`granted_at` 和 `expires_at`。本项目只调用上述查询接口，不调用重置卡兑换接口。
+项目当前使用 `available_count` 展示可用次数，并在明细中展示 `title` 和 `expires_at`；
+`status` 用于控制操作按钮状态。本项目只调用上述查询接口，不调用重置卡兑换接口。
 
 ## 身份声明
 

@@ -930,6 +930,7 @@ struct ResetCreditsResponse {
 #[derive(Deserialize)]
 struct ResetCreditResponse {
     id: String,
+    title: String,
     status: String,
     expires_at: String,
     granted_at: String,
@@ -988,6 +989,7 @@ pub(super) fn parse_reset_credits(body: &str) -> Result<ResetCredits, String> {
             .into_iter()
             .map(|credit| ResetCredit {
                 id: credit.id,
+                title: credit.title,
                 status: credit.status,
                 expires_at: credit.expires_at,
                 granted_at: credit.granted_at,
@@ -1305,6 +1307,7 @@ mod tests {
 
         assert_eq!(credits.available_count, 1);
         assert_eq!(credits.credits[0].id, "credit-1");
+        assert_eq!(credits.credits[0].title, "Full reset");
         assert_eq!(credits.credits[0].status, "available");
     }
     #[test]
