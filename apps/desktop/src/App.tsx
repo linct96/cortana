@@ -11,7 +11,7 @@ import {
   Server,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
-import { PageShell } from './components/page-shell';
+import { PageHeader, PageShell } from './components/page-shell';
 import { Button } from './components/ui/button';
 import { Card, CardContent } from './components/ui/card';
 import { Separator } from './components/ui/separator';
@@ -36,13 +36,22 @@ const statusStyles: Record<
 };
 
 export default function App() {
+  return (
+    <PageShell className="flex min-h-0 flex-col overflow-hidden">
+      <PageHeader title="账号" />
+      <AccountContent />
+    </PageShell>
+  );
+}
+
+function AccountContent() {
   const account = useAccountManager();
   const authInfo = account.status ? statusStyles[account.status.authState.kind] : null;
   const AuthIcon = authInfo?.icon ?? CircleAlert;
   const statusTone = authInfo?.iconClass ?? 'bg-secondary text-secondary-foreground';
 
   return (
-    <PageShell className="flex min-h-0 flex-col overflow-hidden">
+    <>
       <div className="mt-7 w-full px-4 sm:px-8 lg:px-12">
         <Card className="w-full" aria-label="当前 Codex 状态">
           <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
@@ -121,8 +130,7 @@ export default function App() {
       </div>
 
       <section className="mt-9 flex min-h-0 w-full flex-1 flex-col">
-        <div className="mx-4 flex items-center justify-between gap-3 sm:mx-8 lg:mx-12">
-          <h2 className="text-lg font-semibold">账号</h2>
+        <div className="mx-4 flex items-center justify-end gap-3 sm:mx-8 lg:mx-12">
           <div className="flex items-center gap-2">
             <Tooltip>
               <TooltipTrigger render={<span className="inline-flex" />}>
@@ -224,7 +232,7 @@ export default function App() {
           }
         />
       )}
-    </PageShell>
+    </>
   );
 }
 

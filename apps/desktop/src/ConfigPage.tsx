@@ -61,6 +61,15 @@ const configEditorExtensions = [
 ];
 
 export default function ConfigPage() {
+  return (
+    <PageShell className="flex flex-col">
+      <PageHeader title="Codex 配置" />
+      <ConfigContent />
+    </PageShell>
+  );
+}
+
+function ConfigContent() {
   const [config, setConfig] = useState<CodexConfigFile | null>(null);
   const [content, setContent] = useState('');
   const [savedContent, setSavedContent] = useState('');
@@ -105,9 +114,7 @@ export default function ConfigPage() {
   }
 
   return (
-    <PageShell className="flex flex-col">
-      <PageHeader title="Codex 配置" />
-
+    <>
       <form
         className="flex min-h-0 w-full flex-1 flex-col gap-3 px-4 pb-6 sm:px-8 sm:pb-7 lg:px-12"
         onSubmit={saveConfig}
@@ -152,6 +159,6 @@ export default function ConfigPage() {
           theme="none"
         />
       </form>
-    </PageShell>
+    </>
   );
 }

@@ -1,21 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import {
-  Archive,
-  ArchiveRestore,
-  LoaderCircle,
-  MessageSquare,
-  MoreHorizontal,
-  Pencil,
-  RefreshCw,
-  Search,
-  Trash2,
-  TriangleAlert,
-} from 'lucide-react';
+import { LoaderCircle, MessageSquare, RefreshCw, Search, TriangleAlert } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { PageHeader, PageShell } from './components/page-shell';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from './components/ui/alert';
-import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
 import {
   Dialog,
@@ -27,14 +15,6 @@ import {
   DialogTitle,
 } from './components/ui/dialog';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from './components/ui/dropdown-menu';
-import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
@@ -42,17 +22,8 @@ import {
 } from './components/ui/input-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
+import { SessionRow, type CodexSession } from './features/sessions/session-row';
 import { appError } from './utils';
-
-type CodexSession = {
-  id: string;
-  name: string | null;
-  preview: string;
-  cwd: string;
-  source: string;
-  createdAt: number;
-  updatedAt: number;
-};
 
 type CodexSessionPage = {
   sessions: CodexSession[];
@@ -189,23 +160,84 @@ export default function SessionsPage() {
           </Tooltip>
         }
       />
+      <SessionsContent
+        archived={archived}
+        query={query}
+        searchTerm={searchTerm}
+        sessions={sessions}
+        nextCursor={nextCursor}
+        loading={loading}
+        busyId={busyId}
+        error={error}
+        dialog={dialog}
+        onArchivedChange={setArchived}
+        onQueryChange={setQuery}
+        onSearch={submitSearch}
+        onLoad={loadSessions}
+        onMove={moveSession}
+        onDialogChange={setDialog}
+        onRename={renameSession}
+        onDelete={deleteSession}
+      />
+    </PageShell>
+  );
+}
 
+function SessionsContent({
+  archived,
+  query,
+  searchTerm,
+  sessions,
+  nextCursor,
+  loading,
+  busyId,
+  error,
+  dialog,
+  onArchivedChange,
+  onQueryChange,
+  onSearch,
+  onLoad,
+  onMove,
+  onDialogChange,
+  onRename,
+  onDelete,
+}: {
+  archived: boolean;
+  query: string;
+  searchTerm: string;
+  sessions: CodexSession[];
+  nextCursor: string | null;
+  loading: 'list' | 'more' | null;
+  busyId: string | null;
+  error: string | null;
+  dialog: PendingDialog;
+  onArchivedChange: (archived: boolean) => void;
+  onQueryChange: (query: string) => void;
+  onSearch: (event: FormEvent) => void;
+  onLoad: (cursor?: string | null) => Promise<void>;
+  onMove: (session: CodexSession) => Promise<void>;
+  onDialogChange: (dialog: PendingDialog) => void;
+  onRename: (event: FormEvent) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  return (
+    <>
       <Tabs
         className="mt-5 min-h-0 flex-1 gap-0"
         value={archived ? 'archived' : 'active'}
-        onValueChange={(value) => setArchived(value === 'archived')}
+        onValueChange={(value) => onArchivedChange(value === 'archived')}
       >
         <div className="flex items-center justify-between gap-4 border-b border-border px-4 pb-4 sm:px-8 lg:px-12">
           <TabsList>
             <TabsTrigger value="active">当前</TabsTrigger>
             <TabsTrigger value="archived">已归档</TabsTrigger>
           </TabsList>
-          <form className="w-full max-w-72" onSubmit={submitSearch}>
+          <form className="w-full max-w-72" onSubmit={onSearch}>
             <InputGroup>
               <InputGroupInput
                 aria-label="搜索会话标题"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => onQueryChange(event.target.value)}
                 placeholder="搜索会话标题"
                 spellCheck={false}
               />
@@ -226,7 +258,7 @@ export default function SessionsPage() {
                 <AlertTitle>无法读取会话</AlertTitle>
                 <AlertDescription>{error}</AlertDescription>
                 <AlertAction>
-                  <Button variant="outline" size="sm" onClick={() => void loadSessions()}>
+                  <Button variant="outline" size="sm" onClick={() => void onLoad()}>
                     重试
                   </Button>
                 </AlertAction>
@@ -244,14 +276,14 @@ export default function SessionsPage() {
                     archived={archived}
                     busy={busyId === session.id}
                     onRename={() =>
-                      setDialog({
+                      onDialogChange({
                         kind: 'rename',
                         session,
                         name: session.name ?? session.preview,
                       })
                     }
-                    onMove={() => void moveSession(session)}
-                    onDelete={() => setDialog({ kind: 'delete', session })}
+                    onMove={() => void onMove(session)}
+                    onDelete={() => onDialogChange({ kind: 'delete', session })}
                   />
                 ))}
               </ul>
@@ -259,7 +291,7 @@ export default function SessionsPage() {
                 <div className="flex justify-center px-4 py-5 sm:px-8 lg:px-12">
                   <Button
                     variant="outline"
-                    onClick={() => void loadSessions(nextCursor)}
+                    onClick={() => void onLoad(nextCursor)}
                     disabled={loading === 'more'}
                   >
                     {loading === 'more' && <LoaderCircle className="animate-spin" />}
@@ -277,77 +309,11 @@ export default function SessionsPage() {
       <SessionDialog
         dialog={dialog}
         busy={dialog ? busyId === dialog.session.id : false}
-        onChange={setDialog}
-        onRename={renameSession}
-        onDelete={() => void deleteSession()}
+        onChange={onDialogChange}
+        onRename={onRename}
+        onDelete={() => void onDelete()}
       />
-    </PageShell>
-  );
-}
-
-function SessionRow({
-  session,
-  archived,
-  busy,
-  onRename,
-  onMove,
-  onDelete,
-}: {
-  session: CodexSession;
-  archived: boolean;
-  busy: boolean;
-  onRename: () => void;
-  onMove: () => void;
-  onDelete: () => void;
-}) {
-  const title = sessionTitle(session);
-  const showPreview = Boolean(session.name && session.preview.trim() && session.preview !== title);
-  return (
-    <li className="flex min-h-20 items-center gap-3 border-b border-border px-4 py-3 sm:px-8 lg:px-12">
-      <span className="grid size-9 shrink-0 place-items-center rounded-md bg-secondary text-secondary-foreground">
-        <MessageSquare className="size-4" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <strong className="truncate text-sm font-medium">{title}</strong>
-          <Badge variant="secondary">{sourceLabel(session.source)}</Badge>
-        </div>
-        <p className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          {showPreview && <span className="max-w-52 truncate">{session.preview}</span>}
-          <span className="truncate" title={session.cwd}>
-            {session.cwd}
-          </span>
-        </p>
-      </div>
-      <time className="hidden shrink-0 text-xs text-muted-foreground sm:block">
-        {formatSessionTime(session.updatedAt)}
-      </time>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          disabled={busy}
-          render={<Button variant="ghost" size="icon-sm" aria-label="会话操作" />}
-        >
-          {busy ? <LoaderCircle className="animate-spin" /> : <MoreHorizontal />}
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuGroup>
-            <DropdownMenuItem onClick={onRename}>
-              <Pencil /> 重命名
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onMove}>
-              {archived ? <ArchiveRestore /> : <Archive />}
-              {archived ? '恢复' : '归档'}
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem variant="destructive" onClick={onDelete}>
-              <Trash2 /> 永久删除
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </li>
+    </>
   );
 }
 
@@ -394,7 +360,9 @@ function SessionDialog({
             <DialogHeader>
               <DialogTitle>永久删除会话</DialogTitle>
               <DialogDescription>
-                将永久删除“{sessionTitle(dialog.session)}”，此操作无法撤销。
+                将永久删除“
+                {dialog.session.name?.trim() || dialog.session.preview.trim() || '未命名会话'}
+                ”，此操作无法撤销。
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="mt-4">
@@ -445,29 +413,4 @@ function EmptyState({
             : '暂无会话'}
     </div>
   );
-}
-
-function sourceLabel(source: string) {
-  return (
-    {
-      cli: 'CLI',
-      vscode: 'VS Code',
-      appServer: 'App',
-      unknown: '其他',
-    }[source] ?? '其他'
-  );
-}
-
-function sessionTitle(session: CodexSession) {
-  return session.name?.trim() || session.preview.trim() || '未命名会话';
-}
-
-function formatSessionTime(value: number) {
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).format(value);
 }

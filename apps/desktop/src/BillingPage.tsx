@@ -79,7 +79,6 @@ export default function BillingPage() {
       <PageHeader
         title="计费"
         description="模型基础价格 · USD / 百万 Token"
-        className="pb-7"
         actions={
           <>
             <Button variant="outline" type="button" onClick={() => setImporting(true)}>
@@ -94,7 +93,59 @@ export default function BillingPage() {
           </>
         }
       />
+      <BillingContent
+        loading={loading}
+        error={error}
+        pricing={pricing}
+        editing={editing}
+        importing={importing}
+        deleting={deleting}
+        onRetry={loadPricing}
+        onEdit={(model) => setEditing({ model, isNew: false })}
+        onCloseEditor={() => setEditing(null)}
+        onImport={() => setImporting(true)}
+        onCloseImport={() => setImporting(false)}
+        onDeleteRequest={setDeleting}
+        onCloseDelete={() => setDeleting(null)}
+        onDelete={deletePricing}
+      />
+    </PageShell>
+  );
+}
 
+function BillingContent({
+  loading,
+  error,
+  pricing,
+  editing,
+  importing,
+  deleting,
+  onRetry,
+  onEdit,
+  onCloseEditor,
+  onImport,
+  onCloseImport,
+  onDeleteRequest,
+  onCloseDelete,
+  onDelete,
+}: {
+  loading: boolean;
+  error: string | null;
+  pricing: ModelPricing[];
+  editing: { model: ModelPricing; isNew: boolean } | null;
+  importing: boolean;
+  deleting: ModelPricing | null;
+  onRetry: () => Promise<void>;
+  onEdit: (model: ModelPricing) => void;
+  onCloseEditor: () => void;
+  onImport: () => void;
+  onCloseImport: () => void;
+  onDeleteRequest: (model: ModelPricing) => void;
+  onCloseDelete: () => void;
+  onDelete: () => Promise<void>;
+}) {
+  return (
+    <>
       {loading ? (
         <div className="grid min-h-72 place-items-center text-muted-foreground">
           <LoaderCircle className="animate-spin" />
@@ -106,23 +157,19 @@ export default function BillingPage() {
             <AlertTitle>无法读取模型价格</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
             <AlertAction>
-              <Button variant="outline" size="sm" onClick={() => void loadPricing()}>
+              <Button variant="outline" size="sm" onClick={() => void onRetry()}>
                 重试
               </Button>
             </AlertAction>
           </Alert>
         </div>
       ) : pricing.length ? (
-        <PricingList
-          pricing={pricing}
-          onEdit={(model) => setEditing({ model, isNew: false })}
-          onDelete={setDeleting}
-        />
+        <PricingList pricing={pricing} onEdit={onEdit} onDelete={onDeleteRequest} />
       ) : (
         <div className="grid min-h-60 place-items-center border-y text-center">
           <div className="flex flex-col items-center gap-3">
             <p className="text-sm text-muted-foreground">还没有模型定价</p>
-            <Button variant="outline" type="button" onClick={() => setImporting(true)}>
+            <Button variant="outline" type="button" onClick={onImport}>
               <Download data-icon="inline-start" /> 从 models.dev 导入
             </Button>
           </div>
@@ -134,15 +181,13 @@ export default function BillingPage() {
           key={`${editing.isNew ? 'new' : 'edit'}:${editing.model.modelId}`}
           model={editing.model}
           isNew={editing.isNew}
-          onClose={() => setEditing(null)}
-          onSaved={loadPricing}
+          onClose={onCloseEditor}
+          onSaved={onRetry}
         />
       )}
-      {importing && (
-        <ModelsDevDialog onClose={() => setImporting(false)} onImported={loadPricing} />
-      )}
+      {importing && <ModelsDevDialog onClose={onCloseImport} onImported={onRetry} />}
       {deleting && (
-        <Dialog open onOpenChange={(open) => !open && setDeleting(null)}>
+        <Dialog open onOpenChange={(open) => !open && onCloseDelete()}>
           <DialogContent initialFocus={false}>
             <DialogHeader>
               <DialogTitle>删除模型定价</DialogTitle>
@@ -151,17 +196,17 @@ export default function BillingPage() {
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button variant="ghost" type="button" onClick={() => setDeleting(null)}>
+              <Button variant="ghost" type="button" onClick={onCloseDelete}>
                 取消
               </Button>
-              <Button variant="destructive" type="button" onClick={() => void deletePricing()}>
+              <Button variant="destructive" type="button" onClick={() => void onDelete()}>
                 删除
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
-    </PageShell>
+    </>
   );
 }
 

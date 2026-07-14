@@ -147,21 +147,34 @@ export default function AnalyticsPage() {
         }
       />
 
-      {loading && !analytics ? (
-        <LoadingState />
-      ) : error ? (
-        <div className="px-4 py-7 sm:px-8 lg:px-12">
-          <Alert variant="destructive">
-            <TriangleAlert />
-            <AlertTitle>无法读取统计数据</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        </div>
-      ) : analytics ? (
-        <AnalyticsContent analytics={analytics} range={range} />
-      ) : null}
+      <AnalyticsPageContent loading={loading} error={error} analytics={analytics} range={range} />
     </PageShell>
   );
+}
+
+function AnalyticsPageContent({
+  loading,
+  error,
+  analytics,
+  range,
+}: {
+  loading: boolean;
+  error: string | null;
+  analytics: UsageAnalytics | null;
+  range: UsageRange;
+}) {
+  if (loading && !analytics) return <LoadingState />;
+  if (error)
+    return (
+      <div className="px-4 py-7 sm:px-8 lg:px-12">
+        <Alert variant="destructive">
+          <TriangleAlert />
+          <AlertTitle>无法读取统计数据</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      </div>
+    );
+  return analytics ? <AnalyticsContent analytics={analytics} range={range} /> : null;
 }
 
 function AnalyticsContent({ analytics, range }: { analytics: UsageAnalytics; range: UsageRange }) {

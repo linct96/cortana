@@ -20,6 +20,15 @@ type AppStatus = {
 };
 
 export default function SettingsPage() {
+  return (
+    <PageShell>
+      <PageHeader title="常规" />
+      <SettingsContent />
+    </PageShell>
+  );
+}
+
+function SettingsContent() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [codexHome, setCodexHome] = useState('');
   const [busy, setBusy] = useState<string | null>('loading');
@@ -62,9 +71,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <PageShell>
-      <PageHeader title="常规" className="pb-7" />
-
+    <>
       <div className="w-full border-y border-border px-4 sm:px-8 lg:px-12">
         <section className="grid gap-4 py-6 sm:grid-cols-[12rem_minmax(0,1fr)]">
           <div>
@@ -134,7 +141,7 @@ export default function SettingsPage() {
           </div>
         </section>
       </div>
-    </PageShell>
+    </>
   );
 }
 
@@ -142,6 +149,11 @@ export function AboutPage() {
   return (
     <PageShell>
       <PageHeader title="关于" />
+      <AboutContent />
     </PageShell>
   );
+}
+
+function AboutContent() {
+  return null;
 }
