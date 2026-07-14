@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { Check, Database, FolderOpen, LoaderCircle } from 'lucide-react';
+import { Check, FolderOpen, LoaderCircle } from 'lucide-react';
 import { type FormEvent, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { PageHeader, PageShell } from './components/page-shell';
@@ -70,6 +70,18 @@ function SettingsContent() {
     }
   }
 
+  async function openCodexHome() {
+    setBusy('open');
+    try {
+      const openedInVsCode = await invoke<boolean>('open_codex_home', { codexHome });
+      if (!openedInVsCode) toast.info('未找到 VS Code，已在文件管理器中打开。');
+    } catch (error) {
+      toast.error(appError(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <>
       <div className="w-full px-4 pt-6 pb-10 sm:px-8 lg:px-12">
@@ -89,6 +101,20 @@ function SettingsContent() {
                 spellCheck={false}
               />
               <InputGroupAddon align="inline-end">
+                <Tooltip>
+                  <TooltipTrigger render={<span className="inline-flex" />}>
+                    <InputGroupButton
+                      size="icon-sm"
+                      type="button"
+                      onClick={() => void openCodexHome()}
+                      disabled={busy === 'open' || busy === 'loading'}
+                    >
+                      {busy === 'open' ? <LoaderCircle className="animate-spin" /> : <FolderOpen />}
+                      <span className="sr-only">在 VS Code 中打开</span>
+                    </InputGroupButton>
+                  </TooltipTrigger>
+                  <TooltipContent>在 VS Code 中打开</TooltipContent>
+                </Tooltip>
                 <Tooltip>
                   <TooltipTrigger render={<span className="inline-flex" />}>
                     <InputGroupButton
@@ -127,18 +153,14 @@ function SettingsContent() {
             <h2 className="text-sm font-medium">本地数据</h2>
             <p className="mt-1 text-xs text-muted-foreground">账户档案仅保存在本机</p>
           </div>
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              type="button"
-              onClick={() => void invoke('reveal_data_directory')}
-            >
-              <FolderOpen data-icon="inline-start" /> 打开数据目录
-            </Button>
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Database /> SQLite
-            </span>
-          </div>
+          <Button
+            className="w-fit"
+            variant="outline"
+            type="button"
+            onClick={() => void invoke('reveal_data_directory')}
+          >
+            <FolderOpen data-icon="inline-start" /> 打开数据目录
+          </Button>
         </section>
       </div>
     </>
