@@ -14,7 +14,7 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <TooltipProvider>
       <RouterProvider router={router} />
-      <Toaster position="top-center" />
+      <Toaster position="top-center" duration={2000} richColors />
     </TooltipProvider>
   </StrictMode>,
 );
