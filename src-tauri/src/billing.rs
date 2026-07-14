@@ -4,6 +4,7 @@ const MODELS_DEV_API_URL: &str = "https://models.dev/api.json";
 const MODELS_DEV_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_MODELS_DEV_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_PRICING_BATCH: usize = 500;
+const MODELS_DEV_PROVIDERS: [&str; 5] = ["openai", "anthropic", "google", "deepseek", "xai"];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +20,7 @@ pub(super) struct ModelPricing {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ModelsDevPricing {
+    provider: String,
     model_id: String,
     display_name: String,
     release_date: String,
@@ -95,14 +97,22 @@ fn fetch_models_dev_pricing_inner() -> Result<Vec<ModelsDevPricing>, String> {
 }
 
 fn parse_models_dev_pricing(response: &Value) -> Result<Vec<ModelsDevPricing>, String> {
-    let models = response
-        .get("openai")
-        .and_then(|provider| provider.get("models"))
-        .and_then(Value::as_object)
-        .ok_or_else(|| "models.dev 中没有 OpenAI 模型数据。".to_string())?;
-    let mut pricing = models
+    let mut pricing = MODELS_DEV_PROVIDERS
         .iter()
-        .filter_map(|(model_id, model)| {
+        .filter_map(|provider_id| response.get(provider_id))
+        .flat_map(|provider| {
+            let provider_name = provider
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            provider
+                .get("models")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+                .map(move |model| (provider_name, model))
+        })
+        .filter_map(|(provider, (model_id, model))| {
             let cost = model.get("cost")?.as_object()?;
             if !cost.get("input").is_some_and(Value::is_number)
                 && !cost.get("output").is_some_and(Value::is_number)
@@ -110,6 +120,7 @@ fn parse_models_dev_pricing(response: &Value) -> Result<Vec<ModelsDevPricing>, S
                 return None;
             }
             Some(ModelsDevPricing {
+                provider: provider.to_string(),
                 model_id: normalize_model_id(model_id),
                 display_name: model
                     .get("name")
@@ -128,11 +139,16 @@ fn parse_models_dev_pricing(response: &Value) -> Result<Vec<ModelsDevPricing>, S
             })
         })
         .collect::<Vec<_>>();
+    if pricing.is_empty() {
+        return Err("models.dev 中没有常见供应商的模型数据。".to_string());
+    }
     pricing.sort_by(|left, right| {
-        right
-            .release_date
-            .cmp(&left.release_date)
-            .then_with(|| left.display_name.cmp(&right.display_name))
+        left.provider.cmp(&right.provider).then_with(|| {
+            right
+                .release_date
+                .cmp(&left.release_date)
+                .then_with(|| left.display_name.cmp(&right.display_name))
+        })
     });
     Ok(pricing)
 }
@@ -360,19 +376,27 @@ mod tests {
     #[test]
     fn parses_models_dev_base_prices_and_calculates_cached_input_once() {
         let response = json!({
-            "openai": { "models": {
+            "openai": { "name": "OpenAI", "models": {
                 "gpt-5.4": {
                     "name": "GPT-5.4",
                     "release_date": "2026-03-05",
                     "cost": { "input": 2.5, "output": 15, "cache_read": 0.25,
                               "tiers": [{ "input": 5 }] }
                 }
+            }},
+            "anthropic": { "name": "Anthropic", "models": {
+                "claude-sonnet": {
+                    "name": "Claude Sonnet",
+                    "release_date": "2026-02-01",
+                    "cost": { "input": 3, "output": 15 }
+                }
             }}
         });
         let parsed = parse_models_dev_pricing(&response).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].input_cost_per_million, "2.5");
-        assert_eq!(parsed[0].cache_write_cost_per_million, "0");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].provider, "Anthropic");
+        assert_eq!(parsed[1].input_cost_per_million, "2.5");
+        assert_eq!(parsed[1].cache_write_cost_per_million, "0");
 
         let prices = HashMap::from([(
             "gpt-5.4".to_string(),
