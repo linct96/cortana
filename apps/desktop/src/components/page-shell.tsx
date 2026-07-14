@@ -42,12 +42,12 @@ export function AppLayout() {
       {isWindows ? (
         <WindowTitleBar />
       ) : (
-        <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-40 h-11" />
+        <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-40 h-10" />
       )}
       <aside
         className={cn(
           'flex w-[172px] shrink-0 flex-col border-r border-border bg-muted/40 px-3 pb-2 lg:w-56',
-          isWindows ? 'pt-9' : 'pt-12',
+          isWindows ? 'pt-9' : 'pt-10',
         )}
       >
         {isSettings ? (
@@ -107,7 +107,7 @@ export function AppLayout() {
           </>
         )}
       </aside>
-      <div className={cn('flex min-w-0 flex-1 flex-col', isWindows ? 'pt-8' : 'pt-11')}>
+      <div className={cn('flex min-w-0 flex-1 flex-col', isWindows ? 'pt-8' : 'pt-10')}>
         <div className="min-h-0 flex-1">
           <Outlet />
         </div>
@@ -154,32 +154,20 @@ export function PageShell({ children, className }: { children: ReactNode; classN
 
 export function PageHeader({
   title,
-  description,
   actions,
   leading,
-  className,
 }: {
   title: string;
-  description?: string;
   actions?: ReactNode;
   leading?: ReactNode;
-  className?: string;
 }) {
   return (
-    <header
-      className={cn(
-        'flex w-full items-center justify-between gap-4 px-4 sm:px-8 lg:px-12',
-        className,
-      )}
-    >
-      <div className="flex min-w-0 items-center gap-3">
+    <header className="flex h-8 w-full shrink-0 items-center justify-between gap-4 px-4 sm:px-8 lg:px-12">
+      <div className="flex h-8 min-w-0 items-center gap-3">
         {leading}
-        <div className="min-w-0">
-          <h1 className="truncate text-lg font-semibold">{title}</h1>
-          {description && <p className="text-sm text-muted-foreground">{description}</p>}
-        </div>
+        <h1 className="truncate text-lg font-semibold">{title}</h1>
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {actions && <div className="flex h-8 shrink-0 items-center gap-2">{actions}</div>}
     </header>
   );
 }

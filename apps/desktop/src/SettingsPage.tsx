@@ -72,8 +72,8 @@ function SettingsContent() {
 
   return (
     <>
-      <div className="w-full border-y border-border px-4 sm:px-8 lg:px-12">
-        <section className="grid gap-4 py-6 sm:grid-cols-[12rem_minmax(0,1fr)]">
+      <div className="w-full px-4 pt-6 pb-10 sm:px-8 lg:px-12">
+        <section className="grid gap-4 pb-6 sm:grid-cols-[12rem_minmax(0,1fr)]">
           <div>
             <h2 className="text-sm font-medium">Codex 主目录</h2>
             <p className="mt-1 text-xs text-muted-foreground">认证文件所在目录</p>
@@ -122,7 +122,7 @@ function SettingsContent() {
           </label>
         </section>
 
-        <section className="grid gap-4 border-t border-border py-6 sm:grid-cols-[12rem_minmax(0,1fr)] sm:items-center">
+        <section className="grid gap-4 border-t border-border pt-6 sm:grid-cols-[12rem_minmax(0,1fr)] sm:items-center">
           <div>
             <h2 className="text-sm font-medium">本地数据</h2>
             <p className="mt-1 text-xs text-muted-foreground">账户档案仅保存在本机</p>

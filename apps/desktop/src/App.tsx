@@ -36,16 +36,50 @@ const statusStyles: Record<
 };
 
 export default function App() {
+  const account = useAccountManager();
+
   return (
     <PageShell className="flex min-h-0 flex-col overflow-hidden">
-      <PageHeader title="账号" />
-      <AccountContent />
+      <PageHeader
+        title="账号"
+        actions={
+          <>
+            <Tooltip>
+              <TooltipTrigger render={<span className="inline-flex" />}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  type="button"
+                  onClick={() => void account.refreshAllAccounts()}
+                  disabled={account.loading || account.busy === 'refresh:all'}
+                >
+                  <RefreshCw
+                    size={18}
+                    className={
+                      account.loading || account.busy === 'refresh:all' ? 'animate-spin' : ''
+                    }
+                  />
+                  <span className="sr-only">刷新全部</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>刷新全部</TooltipContent>
+            </Tooltip>
+            <Button
+              type="button"
+              onClick={() => account.setAddOpen(true)}
+              disabled={account.busy === 'oauth'}
+            >
+              <Plus data-icon="inline-start" /> 添加账号
+            </Button>
+          </>
+        }
+      />
+      <AccountContent account={account} />
     </PageShell>
   );
 }
 
-function AccountContent() {
-  const account = useAccountManager();
+function AccountContent({ account }: { account: ReturnType<typeof useAccountManager> }) {
   const authInfo = account.status ? statusStyles[account.status.authState.kind] : null;
   const AuthIcon = authInfo?.icon ?? CircleAlert;
   const statusTone = authInfo?.iconClass ?? 'bg-secondary text-secondary-foreground';
@@ -130,38 +164,7 @@ function AccountContent() {
       </div>
 
       <section className="mt-9 flex min-h-0 w-full flex-1 flex-col">
-        <div className="mx-4 flex items-center justify-end gap-3 sm:mx-8 lg:mx-12">
-          <div className="flex items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex" />}>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  type="button"
-                  onClick={() => void account.refreshAllAccounts()}
-                  disabled={account.loading || account.busy === 'refresh:all'}
-                >
-                  <RefreshCw
-                    size={18}
-                    className={
-                      account.loading || account.busy === 'refresh:all' ? 'animate-spin' : ''
-                    }
-                  />
-                  <span className="sr-only">刷新全部</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>刷新全部</TooltipContent>
-            </Tooltip>
-            <Button
-              type="button"
-              onClick={() => account.setAddOpen(true)}
-              disabled={account.busy === 'oauth'}
-            >
-              <Plus data-icon="inline-start" /> 添加账号
-            </Button>
-          </div>
-        </div>
-        <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {account.loading ? (
             <EmptyState loading />
           ) : account.status?.profiles.length ? (
