@@ -28,25 +28,25 @@ export function WindowTitleBar() {
         className={styles.dragRegion}
         onDoubleClick={() => void toggleMaximize()}
       />
-      <CaptionButton label="最小化" glyph="\uE921" onClick={() => appWindow?.minimize()} />
+      <CaptionButton label="最小化" icon="minimize" onClick={() => appWindow?.minimize()} />
       <CaptionButton
         label={maximized ? '还原' : '最大化'}
-        glyph={maximized ? '\uE923' : '\uE922'}
+        icon={maximized ? 'restore' : 'maximize'}
         onClick={toggleMaximize}
       />
-      <CaptionButton label="关闭" glyph="\uE8BB" close onClick={() => appWindow?.close()} />
+      <CaptionButton label="关闭" icon="close" close onClick={() => appWindow?.close()} />
     </header>
   );
 }
 
 function CaptionButton({
   label,
-  glyph,
+  icon,
   close = false,
   onClick,
 }: {
   label: string;
-  glyph: string;
+  icon: CaptionIcon;
   close?: boolean;
   onClick: () => void | Promise<void>;
 }) {
@@ -58,9 +58,30 @@ function CaptionButton({
       title={label}
       onClick={() => void onClick()}
     >
-      <span className={styles.glyph} aria-hidden="true">
-        {glyph}
-      </span>
+      <CaptionIconGlyph icon={icon} />
     </button>
+  );
+}
+
+type CaptionIcon = 'minimize' | 'maximize' | 'restore' | 'close';
+
+function CaptionIconGlyph({ icon }: { icon: CaptionIcon }) {
+  return (
+    <svg className={styles.icon} viewBox="0 0 32 32" aria-hidden="true">
+      {icon === 'minimize' && <path d="M4 16h24" />}
+      {icon === 'maximize' && <rect x="5" y="5" width="22" height="22" rx="3" />}
+      {icon === 'restore' && (
+        <>
+          <path d="M11 5h16v16" />
+          <rect x="5" y="11" width="16" height="16" rx="3" />
+        </>
+      )}
+      {icon === 'close' && (
+        <>
+          <path d="M5 5l22 22" />
+          <path d="M27 5L5 27" />
+        </>
+      )}
+    </svg>
   );
 }

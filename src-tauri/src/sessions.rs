@@ -230,7 +230,10 @@ fn spawn_codex(state: &AppState, codex_home: &Path) -> Result<Child, String> {
         .default_codex_home
         .parent()
         .unwrap_or(&state.default_codex_home);
+    #[cfg(not(target_os = "windows"))]
     let mut candidates = vec![PathBuf::from("codex")];
+    #[cfg(target_os = "windows")]
+    let mut candidates = vec![PathBuf::from("codex.cmd")];
     #[cfg(target_os = "macos")]
     candidates.extend([
         PathBuf::from("/opt/homebrew/bin/codex"),
@@ -239,9 +242,9 @@ fn spawn_codex(state: &AppState, codex_home: &Path) -> Result<Child, String> {
     ]);
     #[cfg(target_os = "windows")]
     candidates.extend([
-        PathBuf::from("codex.exe"),
-        PathBuf::from("codex.cmd"),
         home.join("AppData/Roaming/npm/codex.cmd"),
+        PathBuf::from("codex"),
+        PathBuf::from("codex.exe"),
     ]);
 
     let mut last_error = None;
@@ -312,6 +315,11 @@ fn source_name(source: &Value) -> String {
 }
 
 fn stop_child(child: &mut Child) -> String {
+    #[cfg(target_os = "windows")]
+    let _ = Command::new("taskkill")
+        .args(["/PID", &child.id().to_string(), "/T", "/F"])
+        .output();
+    #[cfg(not(target_os = "windows"))]
     let _ = child.kill();
     let _ = child.wait();
     let mut stderr = String::new();
