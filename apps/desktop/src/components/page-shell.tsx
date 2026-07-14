@@ -1,5 +1,5 @@
 import { Link, Outlet } from '@tanstack/react-router';
-import { Check, ChevronDown, FileCog, Settings, UsersRound } from 'lucide-react';
+import { Check, ChevronDown, FileCog, MessagesSquare, Settings, UsersRound } from 'lucide-react';
 import { type ComponentType, type ReactNode } from 'react';
 import chatGptIcon from '../assets/chatgpt.svg';
 import claudeIcon from '../assets/claude.svg';
@@ -58,6 +58,7 @@ export function AppLayout() {
         </DropdownMenu>
         <nav className="mt-3 flex flex-1 flex-col gap-1" aria-label="主导航">
           <NavItem to="/" label="账号" icon={UsersRound} exact />
+          <NavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
           <NavItem to="/config" label="Codex 配置" icon={FileCog} />
         </nav>
         <nav className="border-t border-border pt-3" aria-label="应用导航">
@@ -79,7 +80,7 @@ function NavItem({
   icon: Icon,
   exact = false,
 }: {
-  to: '/' | '/config' | '/settings';
+  to: '/' | '/sessions' | '/config' | '/settings';
   label: string;
   icon: ComponentType<{ className?: string }>;
   exact?: boolean;
