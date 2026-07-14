@@ -9,6 +9,7 @@
 - Node.js 22
 - pnpm 11.8.0
 - Rust 1.93.0
+- 支持 `app-server` 的 Codex CLI（会话管理功能需要）
 
 系统依赖：
 

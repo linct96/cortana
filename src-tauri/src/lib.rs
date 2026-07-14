@@ -31,6 +31,7 @@ mod accounts;
 mod codex;
 mod db;
 mod oauth;
+mod sessions;
 mod state;
 mod tray;
 
@@ -133,6 +134,11 @@ pub fn run() {
             codex::validate_codex_config,
             codex::format_codex_config,
             codex::save_codex_config,
+            sessions::list_codex_sessions,
+            sessions::rename_codex_session,
+            sessions::archive_codex_session,
+            sessions::restore_codex_session,
+            sessions::delete_codex_session,
             set_autostart,
             reveal_data_directory,
         ])
