@@ -218,7 +218,7 @@ function PricingList({
   onEdit: (model: ModelPricing) => void;
   onDelete: (model: ModelPricing) => void;
 }) {
-  const columns = 'grid-cols-[minmax(9rem,1fr)_repeat(4,4rem)_4.25rem]';
+  const columns = 'grid-cols-[minmax(9rem,1fr)_repeat(4,4rem)_5rem]';
   return (
     <div>
       <div
