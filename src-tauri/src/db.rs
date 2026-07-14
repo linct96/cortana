@@ -10,6 +10,14 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
               key TEXT PRIMARY KEY NOT NULL,
               value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS model_pricing (
+              model_id TEXT PRIMARY KEY NOT NULL,
+              display_name TEXT NOT NULL,
+              input_cost_per_million TEXT NOT NULL,
+              output_cost_per_million TEXT NOT NULL,
+              cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
+              cache_write_cost_per_million TEXT NOT NULL DEFAULT '0'
+            );
             ",
         )
         .map_err(database_error)?;

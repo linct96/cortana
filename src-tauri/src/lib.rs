@@ -29,6 +29,7 @@ use uuid::Uuid;
 
 mod accounts;
 mod analytics;
+mod billing;
 mod codex;
 mod db;
 mod oauth;
@@ -132,6 +133,10 @@ pub fn run() {
             accounts::delete_profile,
             accounts::set_codex_home,
             analytics::get_codex_usage_analytics,
+            billing::list_model_pricing,
+            billing::save_model_pricing,
+            billing::delete_model_pricing,
+            billing::fetch_models_dev_pricing,
             codex::get_codex_config,
             codex::validate_codex_config,
             codex::format_codex_config,

@@ -36,6 +36,7 @@ struct ModelUsage {
     tokens: TokenUsage,
     session_count: usize,
     turn_count: usize,
+    estimated_cost_usd: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -50,6 +51,8 @@ struct UsageBucket {
 #[serde(rename_all = "camelCase")]
 pub(super) struct UsageAnalytics {
     total: TokenUsage,
+    estimated_cost_usd: f64,
+    unpriced_model_count: usize,
     session_count: usize,
     turn_count: usize,
     active_days: usize,
@@ -109,20 +112,40 @@ fn aggregate_usage(state: &AppState, range: UsageRange) -> Result<UsageAnalytics
         }
     }
 
+    let pricing = billing::load_pricing(&db::open_database(state)?)?;
+    let mut estimated_cost_usd = 0.0;
+    let mut unpriced_model_count = 0;
     let mut models = analytics
         .models
         .into_iter()
-        .map(|(model, usage)| ModelUsage {
-            model,
-            tokens: usage.tokens,
-            session_count: usage.sessions.len(),
-            turn_count: usage.turns.len(),
+        .map(|(model, usage)| {
+            let estimated_cost = billing::estimated_cost(
+                &pricing,
+                &model,
+                usage.tokens.input_tokens,
+                usage.tokens.cached_input_tokens,
+                usage.tokens.output_tokens,
+            );
+            if let Some(cost) = estimated_cost {
+                estimated_cost_usd += cost;
+            } else {
+                unpriced_model_count += 1;
+            }
+            ModelUsage {
+                model,
+                tokens: usage.tokens,
+                session_count: usage.sessions.len(),
+                turn_count: usage.turns.len(),
+                estimated_cost_usd: estimated_cost,
+            }
         })
         .collect::<Vec<_>>();
     models.sort_by(|left, right| right.tokens.total_tokens.cmp(&left.tokens.total_tokens));
 
     Ok(UsageAnalytics {
         total: analytics.total,
+        estimated_cost_usd,
+        unpriced_model_count,
         session_count: analytics.sessions.len(),
         turn_count: analytics.turns.len(),
         active_days: analytics.active_days.len(),

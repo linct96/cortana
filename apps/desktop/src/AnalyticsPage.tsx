@@ -34,6 +34,7 @@ type ModelUsage = {
   tokens: TokenUsage;
   sessionCount: number;
   turnCount: number;
+  estimatedCostUsd: number | null;
 };
 
 type UsageBucket = {
@@ -44,9 +45,8 @@ type UsageBucket = {
 
 type UsageAnalytics = {
   total: TokenUsage;
-  sessionCount: number;
-  turnCount: number;
-  activeDays: number;
+  estimatedCostUsd: number;
+  unpricedModelCount: number;
   models: ModelUsage[];
   trend: UsageBucket[];
   skippedFiles: number;
@@ -62,6 +62,12 @@ const ranges: { value: UsageRange; label: string }[] = [
 const number = new Intl.NumberFormat('zh-CN');
 const compactNumber = new Intl.NumberFormat('zh-CN', {
   notation: 'compact',
+  maximumFractionDigits: 1,
+});
+const currency = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 1,
   maximumFractionDigits: 1,
 });
 
@@ -173,23 +179,21 @@ function AnalyticsContent({ analytics, range }: { analytics: UsageAnalytics; ran
         </Alert>
       )}
 
-      <section aria-label="用量概览" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section aria-label="用量概览" className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
         <MetricCard label="总 Token" value={analytics.total.totalTokens} detail="当前范围内用量" />
+        <CostMetricCard
+          value={analytics.estimatedCostUsd}
+          unpricedModelCount={analytics.unpricedModelCount}
+        />
         <MetricCard
           label="输入 Token"
           value={analytics.total.inputTokens}
-          detail={`缓存输入 ${number.format(analytics.total.cachedInputTokens)} · 命中率 ${cacheHitRate.toFixed(1)}%`}
+          detail={`缓存命中率 ${cacheHitRate.toFixed(1)}%`}
         />
         <MetricCard
           label="输出 Token"
           value={analytics.total.outputTokens}
           detail={`推理输出 ${number.format(analytics.total.reasoningOutputTokens)}`}
-        />
-        <MetricCard
-          label="使用活动"
-          value={analytics.sessionCount}
-          detail={`${number.format(analytics.turnCount)} 轮 · ${number.format(analytics.activeDays)} 个活跃日`}
-          suffix="个会话"
         />
       </section>
 
@@ -214,17 +218,31 @@ function AnalyticsContent({ analytics, range }: { analytics: UsageAnalytics; ran
   );
 }
 
-function MetricCard({
-  label,
+function CostMetricCard({
   value,
-  detail,
-  suffix,
+  unpricedModelCount,
 }: {
-  label: string;
   value: number;
-  detail: string;
-  suffix?: string;
+  unpricedModelCount: number;
 }) {
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>预估费用</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <strong className="text-2xl font-semibold tabular-nums" title={currency.format(value)}>
+          {currency.format(value)}
+        </strong>
+        <p className="mt-2 text-xs text-muted-foreground">
+          {unpricedModelCount ? `${unpricedModelCount} 个模型未计入` : '全部模型已定价'}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function MetricCard({ label, value, detail }: { label: string; value: number; detail: string }) {
   return (
     <Card size="sm">
       <CardHeader>
@@ -234,7 +252,6 @@ function MetricCard({
         <strong className="text-2xl font-semibold tabular-nums" title={number.format(value)}>
           {compactNumber.format(value)}
         </strong>
-        {suffix && <span className="ml-1 text-xs text-muted-foreground">{suffix}</span>}
         <p className="mt-2 text-xs text-muted-foreground">{detail}</p>
       </CardContent>
     </Card>
@@ -286,10 +303,15 @@ function ModelRow({ usage, totalTokens }: { usage: ModelUsage; totalTokens: numb
         <strong className="truncate text-sm font-medium" title={usage.model}>
           {usage.model}
         </strong>
-        <span className="shrink-0 text-sm font-semibold tabular-nums">
-          {number.format(usage.tokens.totalTokens)}
-          <span className="ml-1 font-normal text-muted-foreground">Token</span>
-        </span>
+        <div className="flex shrink-0 items-baseline gap-4">
+          <span className="text-sm font-medium tabular-nums text-muted-foreground">
+            {usage.estimatedCostUsd === null ? '未定价' : currency.format(usage.estimatedCostUsd)}
+          </span>
+          <span className="text-sm font-semibold tabular-nums">
+            {number.format(usage.tokens.totalTokens)}
+            <span className="ml-1 font-normal text-muted-foreground">Token</span>
+          </span>
+        </div>
       </div>
       <Progress value={share} aria-label={`${usage.model} 占比 ${share.toFixed(1)}%`} />
       <div className="grid gap-3 text-xs sm:grid-cols-3 xl:grid-cols-6">
@@ -297,20 +319,19 @@ function ModelRow({ usage, totalTokens }: { usage: ModelUsage; totalTokens: numb
           <TokenDetail key={label} label={String(label)} value={Number(value)} />
         ))}
         <TokenDetail label="会话" value={usage.sessionCount} />
-        <TokenDetail label="轮次" value={usage.turnCount} suffix={`占比 ${share.toFixed(1)}%`} />
+        <TokenDetail label="轮次" value={usage.turnCount} />
       </div>
     </article>
   );
 }
 
-function TokenDetail({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
+function TokenDetail({ label, value }: { label: string; value: number }) {
   return (
     <div className="min-w-0">
       <span className="block text-muted-foreground">{label}</span>
       <span className="mt-1 block truncate font-medium tabular-nums" title={number.format(value)}>
         {number.format(value)}
       </span>
-      {suffix && <span className="mt-1 block text-muted-foreground">{suffix}</span>}
     </div>
   );
 }
