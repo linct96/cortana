@@ -2,9 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { Download, LoaderCircle, Pencil, Plus, Trash2, TriangleAlert } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { PageHeader, PageShell } from './components/page-shell';
-import { Alert, AlertAction, AlertDescription, AlertTitle } from './components/ui/alert';
-import { Button } from './components/ui/button';
+import { PageHeader, PageShell } from '../../components/page-shell';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -12,19 +12,14 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from './components/ui/dialog';
-import { Field, FieldError, FieldGroup, FieldLabel } from './components/ui/field';
-import { Input } from './components/ui/input';
-import { InputGroup, InputGroupAddon, InputGroupInput } from './components/ui/input-group';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
-import { ModelsDevDialog } from './features/billing/models-dev-dialog';
-import {
-  emptyPricing,
-  type ModelPricing,
-  type PricingErrors,
-  validatePricing,
-} from './features/billing/types';
-import { appError } from './utils';
+} from '../../components/ui/dialog';
+import { Field, FieldError, FieldGroup, FieldLabel } from '../../components/ui/field';
+import { Input } from '../../components/ui/input';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '../../components/ui/input-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import { ModelsDevDialog } from './models-dev-dialog';
+import { emptyPricing, type ModelPricing, type PricingErrors, validatePricing } from './types';
+import { appError } from '../../utils';
 
 const priceFields = [
   ['inputCostPerMillion', '输入'],
