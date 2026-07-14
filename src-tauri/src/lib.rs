@@ -12,6 +12,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -68,6 +69,58 @@ fn reveal_data_directory(app: tauri::AppHandle, state: State<'_, AppState>) -> R
     app.opener()
         .open_path(parent.display().to_string(), None::<&str>)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_codex_home(app: tauri::AppHandle, codex_home: String) -> Result<bool, String> {
+    let path = existing_directory(&codex_home)?;
+    if open_with_vscode(&path) {
+        return Ok(true);
+    }
+    app.opener()
+        .open_path(path.display().to_string(), None::<&str>)
+        .map_err(|error| error.to_string())?;
+    Ok(false)
+}
+
+fn existing_directory(value: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value.trim());
+    if path.is_dir() {
+        Ok(path)
+    } else {
+        Err("Codex 主目录不存在。".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_with_vscode(path: &Path) -> bool {
+    Command::new("/usr/bin/open")
+        .args(["-a", "Visual Studio Code"])
+        .arg(path)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "windows")]
+fn open_with_vscode(path: &Path) -> bool {
+    let mut candidates = vec![PathBuf::from("code.exe")];
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(local_app_data).join("Programs/Microsoft VS Code/Code.exe"));
+    }
+    candidates.into_iter().any(|candidate| {
+        Command::new(candidate)
+            .arg(path)
+            .status()
+            .is_ok_and(|status| status.success())
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn open_with_vscode(path: &Path) -> bool {
+    Command::new("code")
+        .arg(path)
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 pub fn run() {
@@ -156,6 +209,7 @@ pub fn run() {
             sessions::delete_codex_session,
             set_autostart,
             reveal_data_directory,
+            open_codex_home,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -176,4 +230,18 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_accepts_existing_codex_home_directories() {
+        assert_eq!(existing_directory(" ").unwrap_err(), "Codex 主目录不存在。");
+        assert_eq!(
+            existing_directory(std::env::temp_dir().to_str().unwrap()).unwrap(),
+            std::env::temp_dir()
+        );
+    }
 }
