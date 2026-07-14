@@ -78,7 +78,6 @@ export default function BillingPage() {
     <PageShell>
       <PageHeader
         title="计费"
-        description="模型基础价格 · USD / 百万 Token"
         actions={
           <>
             <Button variant="outline" type="button" onClick={() => setImporting(true)}>
@@ -146,12 +145,12 @@ function BillingContent({
 }) {
   return (
     <>
-      {loading ? (
-        <div className="grid min-h-72 place-items-center text-muted-foreground">
-          <LoaderCircle className="animate-spin" />
-        </div>
-      ) : error ? (
-        <div className="px-4 sm:px-8 lg:px-12">
+      <div className="px-4 pt-6 pb-10 sm:px-8 lg:px-12">
+        {loading ? (
+          <div className="grid min-h-72 place-items-center text-muted-foreground">
+            <LoaderCircle className="animate-spin" />
+          </div>
+        ) : error ? (
           <Alert variant="destructive">
             <TriangleAlert />
             <AlertTitle>无法读取模型价格</AlertTitle>
@@ -162,19 +161,19 @@ function BillingContent({
               </Button>
             </AlertAction>
           </Alert>
-        </div>
-      ) : pricing.length ? (
-        <PricingList pricing={pricing} onEdit={onEdit} onDelete={onDeleteRequest} />
-      ) : (
-        <div className="grid min-h-60 place-items-center border-y text-center">
-          <div className="flex flex-col items-center gap-3">
-            <p className="text-sm text-muted-foreground">还没有模型定价</p>
-            <Button variant="outline" type="button" onClick={onImport}>
-              <Download data-icon="inline-start" /> 从 models.dev 导入
-            </Button>
+        ) : pricing.length ? (
+          <PricingList pricing={pricing} onEdit={onEdit} onDelete={onDeleteRequest} />
+        ) : (
+          <div className="grid min-h-60 place-items-center text-center">
+            <div className="flex flex-col items-center gap-3">
+              <p className="text-sm text-muted-foreground">还没有模型定价</p>
+              <Button variant="outline" type="button" onClick={onImport}>
+                <Download data-icon="inline-start" /> 从 models.dev 导入
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {editing && (
         <PricingEditor
@@ -221,7 +220,7 @@ function PricingList({
 }) {
   const columns = 'grid-cols-[minmax(9rem,1fr)_repeat(4,4rem)_4.25rem]';
   return (
-    <div className="border-y border-border px-4 sm:px-8 lg:px-12">
+    <div>
       <div
         className={`grid ${columns} gap-2 border-b py-2 text-xs font-medium text-muted-foreground`}
       >
