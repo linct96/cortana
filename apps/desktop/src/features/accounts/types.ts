@@ -11,9 +11,22 @@ export type Profile = {
   creditsBalance: string | null;
   creditsUnlimited: boolean;
   usageUpdatedAt: number | null;
+  resetCreditsAvailableCount: number | null;
   isActive: boolean;
   lastUsedAt: number | null;
   updatedAt: number;
+};
+
+export type ResetCredits = {
+  availableCount: number;
+  credits: ResetCredit[];
+};
+
+export type ResetCredit = {
+  id: string;
+  status: string;
+  expiresAt: string;
+  grantedAt: string;
 };
 
 export type UsageWindow = {

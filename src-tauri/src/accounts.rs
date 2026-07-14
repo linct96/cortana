@@ -102,6 +102,45 @@ pub(super) async fn refresh_profile_usage(
 }
 
 #[tauri::command]
+pub(super) async fn get_profile_reset_credits(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<ResetCredits, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = open_database(&state)?;
+        let (account_type, account_id, auth_json) = connection
+            .query_row(
+                "SELECT account_type, account_id, auth_json FROM accounts WHERE id = ?1",
+                params![profile_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(database_error)?
+            .ok_or_else(|| "账户不存在。".to_string())?;
+        if account_type != ACCOUNT_TYPE_OAUTH {
+            return Err("中转站账户不支持重置卡查询。".to_string());
+        }
+        let credits = fetch_reset_credits(&auth_json, &account_id)?;
+        connection
+            .execute(
+                "UPDATE accounts SET reset_credits_available_count = ?1 WHERE id = ?2",
+                params![credits.available_count, profile_id],
+            )
+            .map_err(database_error)?;
+        Ok(credits)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub(super) fn get_profile_auth(
     state: State<'_, AppState>,
     profile_id: String,
@@ -266,7 +305,7 @@ pub(super) fn list_profiles(
     active_id: Option<&str>,
 ) -> Result<Vec<ProfileSummary>, String> {
     let mut statement = connection
-        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, credits_balance, credits_unlimited, usage_updated_at, last_used_at, updated_at FROM accounts ORDER BY sort_order ASC, created_at ASC")
+        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, credits_balance, credits_unlimited, usage_updated_at, last_used_at, updated_at, reset_credits_available_count FROM accounts ORDER BY sort_order ASC, created_at ASC")
         .map_err(database_error)?;
     let rows = statement
         .query_map([], |row| profile_summary_from_row(row, active_id))
@@ -319,6 +358,7 @@ pub(super) fn profile_summary_from_row(
         credits_balance: row.get(13)?,
         credits_unlimited: row.get(14)?,
         usage_updated_at: row.get(15)?,
+        reset_credits_available_count: row.get(18)?,
         last_used_at: row.get(16)?,
         updated_at: row.get(17)?,
     })
@@ -331,7 +371,7 @@ pub(super) fn get_profile_summary(
 ) -> Result<ProfileSummary, String> {
     connection
         .query_row(
-            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, credits_balance, credits_unlimited, usage_updated_at, last_used_at, updated_at FROM accounts WHERE id = ?1",
+            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, credits_balance, credits_unlimited, usage_updated_at, last_used_at, updated_at, reset_credits_available_count FROM accounts WHERE id = ?1",
             params![profile_id],
             |row| profile_summary_from_row(row, active_id),
         )
@@ -378,6 +418,7 @@ pub(super) fn detected_profile_from_auth(
             credits_balance: None,
             credits_unlimited: false,
             usage_updated_at: None,
+            reset_credits_available_count: None,
             is_active: true,
             last_used_at: None,
             updated_at: now,
@@ -414,6 +455,7 @@ pub(super) fn detected_profile_from_auth(
             .map(|usage| usage.credits_unlimited)
             .unwrap_or(false),
         usage_updated_at: usage.map(|_| now),
+        reset_credits_available_count: None,
         is_active: true,
         last_used_at: None,
         updated_at: now,
@@ -851,10 +893,14 @@ pub(super) fn refresh_profile_usage_internal(
         return Err("中转站账户不支持额度查询。".to_string());
     }
     let usage = fetch_account_usage(&auth_json, &account_id)?;
+    let plan_type = usage.plan_type.trim().to_lowercase();
+    let reset_credits = (!plan_type.is_empty() && plan_type != "free")
+        .then(|| fetch_reset_credits(&auth_json, &account_id))
+        .transpose()?;
     let now = now_millis();
     connection
         .execute(
-            "UPDATE accounts SET plan_type = CASE WHEN ?1 = '' THEN plan_type ELSE ?1 END, usage_primary_percent = ?2, usage_primary_window_minutes = ?3, usage_primary_resets_at = ?4, usage_secondary_percent = ?5, usage_secondary_window_minutes = ?6, usage_secondary_resets_at = ?7, credits_balance = ?8, credits_unlimited = ?9, usage_updated_at = ?10 WHERE id = ?11",
+            "UPDATE accounts SET plan_type = CASE WHEN ?1 = '' THEN plan_type ELSE ?1 END, usage_primary_percent = ?2, usage_primary_window_minutes = ?3, usage_primary_resets_at = ?4, usage_secondary_percent = ?5, usage_secondary_window_minutes = ?6, usage_secondary_resets_at = ?7, credits_balance = ?8, credits_unlimited = ?9, usage_updated_at = ?10, reset_credits_available_count = ?11 WHERE id = ?12",
             params![
                 usage.plan_type,
                 usage.primary.as_ref().map(|window| window.used_percent),
@@ -866,12 +912,88 @@ pub(super) fn refresh_profile_usage_internal(
                 usage.credits_balance,
                 usage.credits_unlimited,
                 now,
+                reset_credits.as_ref().map(|credits| credits.available_count),
                 profile_id,
             ],
         )
         .map_err(database_error)?;
     let active_id = get_setting(&connection, "active_profile_id")?;
     get_profile_summary(&connection, profile_id, active_id.as_deref())
+}
+
+#[derive(Deserialize)]
+struct ResetCreditsResponse {
+    available_count: i64,
+    credits: Vec<ResetCreditResponse>,
+}
+
+#[derive(Deserialize)]
+struct ResetCreditResponse {
+    id: String,
+    status: String,
+    expires_at: String,
+    granted_at: String,
+}
+
+pub(super) fn fetch_reset_credits(
+    auth_json: &str,
+    account_id: &str,
+) -> Result<ResetCredits, String> {
+    let auth: Value =
+        serde_json::from_str(auth_json).map_err(|_| "存档的 auth.json 已损坏。".to_string())?;
+    let access_token = auth
+        .get("tokens")
+        .and_then(|tokens| tokens.get("access_token"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| "账户缺少 access_token，请重新授权。".to_string())?;
+    let account_id = if account_id.is_empty() {
+        identity_from_auth_json(&auth).account_id
+    } else {
+        account_id.to_string()
+    };
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut request = client
+        .get(RESET_CREDITS_URL)
+        .bearer_auth(access_token)
+        .header("Accept", "application/json")
+        .header("User-Agent", "codex_cli_rs");
+    if !account_id.is_empty() {
+        request = request.header("ChatGPT-Account-ID", &account_id);
+    }
+    let response = request
+        .send()
+        .map_err(|error| format!("重置卡查询失败：{error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .map_err(|error| format!("无法读取重置卡信息：{error}"))?;
+    if !status.is_success() {
+        return Err(format!("重置卡查询失败：HTTP {status}"));
+    }
+    parse_reset_credits(&body)
+}
+
+pub(super) fn parse_reset_credits(body: &str) -> Result<ResetCredits, String> {
+    let payload: ResetCreditsResponse =
+        serde_json::from_str(body).map_err(|error| format!("重置卡响应格式不符合预期：{error}"))?;
+    Ok(ResetCredits {
+        available_count: payload.available_count,
+        credits: payload
+            .credits
+            .into_iter()
+            .map(|credit| ResetCredit {
+                id: credit.id,
+                status: credit.status,
+                expires_at: credit.expires_at,
+                granted_at: credit.granted_at,
+            })
+            .collect(),
+    })
 }
 
 pub(super) fn fetch_account_usage(
@@ -1173,6 +1295,17 @@ mod tests {
         assert_eq!(usage.secondary.unwrap().used_percent, 5.0);
         assert_eq!(usage.credits_balance.as_deref(), Some("9.99"));
         assert!(!usage.credits_unlimited);
+    }
+    #[test]
+    fn parses_reset_credit_details() {
+        let credits = parse_reset_credits(
+            r#"{"credits":[{"id":"credit-1","reset_type":"codex_rate_limits","status":"available","granted_at":"2026-06-25T10:00:00Z","expires_at":"2026-07-18T00:41:14Z","redeem_started_at":null,"redeemed_at":null,"title":"Full reset"}],"available_count":1,"total_earned_count":0}"#,
+        )
+        .unwrap();
+
+        assert_eq!(credits.available_count, 1);
+        assert_eq!(credits.credits[0].id, "credit-1");
+        assert_eq!(credits.credits[0].status, "available");
     }
     #[test]
     fn updates_profile_alias_auth_and_active_file() {

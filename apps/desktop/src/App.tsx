@@ -22,6 +22,7 @@ import {
   EditAccountDialog,
 } from './features/accounts/account-dialog';
 import { AccountBalance, AccountRow } from './features/accounts/account-list';
+import { ResetCreditsDialog } from './features/accounts/reset-credits-dialog';
 import type { AuthState } from './features/accounts/types';
 import { useAccountManager } from './features/accounts/use-account-manager';
 
@@ -184,6 +185,7 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                     onSwitch={() => void account.switchTo(profile)}
                     onRefresh={() => void account.refreshAccount(profile)}
                     onEdit={() => void account.openEditor(profile)}
+                    onViewResetCredits={() => void account.viewResetCredits(profile)}
                     onDelete={() => account.setConfirm({ kind: 'delete', profile })}
                   />
                 ))}
@@ -233,6 +235,13 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
               ? void account.deleteProfile(account.confirm.profile)
               : account.confirm && void account.switchTo(account.confirm.profile, true)
           }
+        />
+      )}
+      {account.resetCreditsProfile && (
+        <ResetCreditsDialog
+          profile={account.resetCreditsProfile}
+          credits={account.resetCredits}
+          onClose={() => account.setResetCreditsProfile(null)}
         />
       )}
     </>
