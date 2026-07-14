@@ -29,6 +29,22 @@ import type { AgentsProfile, AgentsStatus } from './features/prompts/types';
 import { appError, cn } from './utils';
 
 export default function PromptsPage() {
+  return (
+    <PageShell className="flex min-h-0 flex-col overflow-hidden">
+      <PageHeader
+        title="提示词管理"
+        actions={
+          <Link to="/prompts/new" className={buttonVariants()}>
+            <Plus data-icon="inline-start" /> 新建提示词
+          </Link>
+        }
+      />
+      <PromptsContent />
+    </PageShell>
+  );
+}
+
+function PromptsContent() {
   const [status, setStatus] = useState<AgentsStatus | null>(null);
   const [busy, setBusy] = useState<string | null>('load');
   const [importing, setImporting] = useState(false);
@@ -93,15 +109,7 @@ export default function PromptsPage() {
   }
 
   return (
-    <PageShell className="flex min-h-0 flex-col overflow-hidden">
-      <PageHeader
-        title="提示词管理"
-        actions={
-          <Link to="/prompts/new" className={buttonVariants()}>
-            <Plus data-icon="inline-start" /> 新建提示词
-          </Link>
-        }
-      />
+    <>
       {status && status.fileState !== 'managed' && status.fileState !== 'missing' && (
         <div className="shrink-0 px-4 pb-5 sm:px-8 lg:px-12">
           <Alert className="pr-40">
@@ -129,7 +137,7 @@ export default function PromptsPage() {
             </span>
           </div>
         ) : status?.profiles.length ? (
-          <div className="flex w-full flex-col gap-3 px-4 pt-2 pb-6 sm:px-8 lg:px-12">
+          <div className="flex w-full flex-col gap-3 px-4 pt-6 pb-10 sm:px-8 lg:px-12">
             {status.profiles.map((profile) => (
               <PromptRow
                 key={profile.id}
@@ -184,7 +192,7 @@ export default function PromptsPage() {
         onClose={() => setForceProfile(null)}
         onConfirm={() => forceProfile && void activateProfile(forceProfile, true)}
       />
-    </PageShell>
+    </>
   );
 }
 
@@ -214,17 +222,13 @@ function PromptRow({
       <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-primary">
         <FileText size={18} />
       </div>
-      <Link
-        to="/prompts/edit/$profileId"
-        params={{ profileId: profile.id }}
-        className="min-w-0 flex-1 rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-      >
+      <div className="min-w-0 flex-1">
         <div className="mb-0.5 flex items-center gap-2">
           <strong className="truncate text-sm font-medium">{profile.name}</strong>
           {profile.isActive && <Badge>使用中</Badge>}
         </div>
         <p className="truncate text-xs text-muted-foreground">{preview || '空白提示词'}</p>
-      </Link>
+      </div>
       <div className="pointer-events-none flex min-w-18 justify-end gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
         {!profile.isActive && (
           <Button size="icon" type="button" onClick={onActivate} disabled={busy}>

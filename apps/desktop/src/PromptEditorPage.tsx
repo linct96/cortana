@@ -103,7 +103,6 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
     <PageShell className="flex min-h-0 flex-col overflow-hidden">
       <PageHeader
         title={profileId ? '编辑提示词' : '新建提示词'}
-        className="shrink-0 pb-6"
         leading={
           <Link
             to="/prompts"
@@ -115,9 +114,56 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
         }
         actions={profile?.isActive ? <Badge>使用中</Badge> : undefined}
       />
+      <PromptEditorContent
+        name={name}
+        content={content}
+        busy={busy}
+        dirty={dirty}
+        forceSave={forceSave}
+        navigationBlocked={blocker.status === 'blocked'}
+        onNameChange={setName}
+        onContentChange={setContent}
+        onSave={save}
+        onCloseForce={() => setForceSave(false)}
+        onResetNavigation={() => blocker.reset?.()}
+        onProceedNavigation={() => blocker.proceed?.()}
+      />
+    </PageShell>
+  );
+}
+
+function PromptEditorContent({
+  name,
+  content,
+  busy,
+  dirty,
+  forceSave,
+  navigationBlocked,
+  onNameChange,
+  onContentChange,
+  onSave,
+  onCloseForce,
+  onResetNavigation,
+  onProceedNavigation,
+}: {
+  name: string;
+  content: string;
+  busy: boolean;
+  dirty: boolean;
+  forceSave: boolean;
+  navigationBlocked: boolean;
+  onNameChange: (name: string) => void;
+  onContentChange: (content: string) => void;
+  onSave: (event?: FormEvent, force?: boolean) => Promise<void>;
+  onCloseForce: () => void;
+  onResetNavigation: () => void;
+  onProceedNavigation: () => void;
+}) {
+  return (
+    <>
       <form
         className="flex min-h-0 flex-1 flex-col px-4 pb-6 sm:px-8 sm:pb-7 lg:px-12"
-        onSubmit={(event) => void save(event)}
+        onSubmit={(event) => void onSave(event)}
       >
         <FieldGroup className="min-h-0 flex-1 gap-4">
           <Field className="shrink-0">
@@ -125,7 +171,7 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
             <Input
               id="prompt-name"
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => onNameChange(event.target.value)}
               disabled={busy}
             />
           </Field>
@@ -135,7 +181,7 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
               className="min-h-0 flex-1 overflow-hidden rounded-lg border border-input focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
               height="100%"
               value={content}
-              onChange={setContent}
+              onChange={onContentChange}
               extensions={editorExtensions}
               editable={!busy}
               readOnly={busy}
@@ -160,17 +206,17 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
         description="继续保存会用当前内容覆盖 AGENTS.md。"
         confirmLabel="强制覆盖"
         busy={busy}
-        onClose={() => setForceSave(false)}
-        onConfirm={() => void save(undefined, true)}
+        onClose={onCloseForce}
+        onConfirm={() => void onSave(undefined, true)}
       />
       <ConfirmDialog
-        open={blocker.status === 'blocked'}
+        open={navigationBlocked}
         title="离开编辑页面"
         description="当前提示词的修改尚未保存。"
         confirmLabel="放弃并离开"
-        onClose={() => blocker.reset?.()}
-        onConfirm={() => blocker.proceed?.()}
+        onClose={onResetNavigation}
+        onConfirm={onProceedNavigation}
       />
-    </PageShell>
+    </>
   );
 }
