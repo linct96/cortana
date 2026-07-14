@@ -8,6 +8,7 @@ export type ModelPricing = {
 };
 
 export type ModelsDevPricing = ModelPricing & {
+  provider: string;
   releaseDate: string;
 };
 

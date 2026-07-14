@@ -8,12 +8,19 @@ import { Checkbox } from '../../components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '../../components/ui/dialog';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '../../components/ui/input-group';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../components/ui/select';
 import { appError } from '../../utils';
 import type { ModelsDevPricing } from './types';
 
@@ -30,6 +37,7 @@ export function ModelsDevDialog({
   onImported: () => Promise<void>;
 }) {
   const [models, setModels] = useState<ModelsDevPricing[]>([]);
+  const [provider, setProvider] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -58,14 +66,21 @@ export function ModelsDevDialog({
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return query
-      ? models.filter(
-          (model) =>
-            model.modelId.toLowerCase().includes(query) ||
-            model.displayName.toLowerCase().includes(query),
-        )
-      : models;
-  }, [models, search]);
+    return models.filter(
+      (model) =>
+        (!provider || model.provider === provider) &&
+        (!query ||
+          model.modelId.toLowerCase().includes(query) ||
+          model.displayName.toLowerCase().includes(query)),
+    );
+  }, [models, provider, search]);
+  const providers = [
+    { label: '全部供应商', value: null },
+    ...[...new Set(models.map((model) => model.provider))].map((name) => ({
+      label: name,
+      value: name,
+    })),
+  ];
   const allFilteredSelected =
     filtered.length > 0 && filtered.every((model) => selected.has(model.modelId));
 
@@ -112,22 +127,37 @@ export function ModelsDevDialog({
         initialFocus={false}
       >
         <DialogHeader>
-          <DialogTitle>从 models.dev 导入</DialogTitle>
-          <DialogDescription>OpenAI 模型基础价格，单位为 USD / 百万 Token</DialogDescription>
+          <DialogTitle>导入模型价格</DialogTitle>
         </DialogHeader>
 
         <div className="flex min-h-0 flex-col gap-3">
-          <InputGroup>
-            <InputGroupAddon>
-              <Search />
-            </InputGroupAddon>
-            <InputGroupInput
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜索模型"
-              aria-label="搜索 models.dev 模型"
-            />
-          </InputGroup>
+          <div className="flex gap-2">
+            <Select items={providers} value={provider} onValueChange={setProvider}>
+              <SelectTrigger className="w-36" aria-label="按供应商筛选模型">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {providers.map((item) => (
+                    <SelectItem key={item.value ?? 'all'} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <InputGroup>
+              <InputGroupAddon>
+                <Search />
+              </InputGroupAddon>
+              <InputGroupInput
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="搜索模型"
+                aria-label="搜索 models.dev 模型"
+              />
+            </InputGroup>
+          </div>
 
           {loading ? (
             <div className="grid min-h-0 flex-1 place-items-center text-muted-foreground">
@@ -154,9 +184,9 @@ export function ModelsDevDialog({
                 />
                 <span className="flex-1">模型</span>
                 <span className="w-16 text-right">输入</span>
+                <span className="w-16 text-right">输出</span>
                 <span className="w-16 text-right">缓存读</span>
                 <span className="w-16 text-right">缓存写</span>
-                <span className="w-16 text-right">输出</span>
               </label>
               {filtered.length ? (
                 filtered.map((model) => (
@@ -185,9 +215,9 @@ export function ModelsDevDialog({
                       </span>
                     </span>
                     <Price value={model.inputCostPerMillion} />
+                    <Price value={model.outputCostPerMillion} />
                     <Price value={model.cacheReadCostPerMillion} />
                     <Price value={model.cacheWriteCostPerMillion} />
-                    <Price value={model.outputCostPerMillion} />
                   </label>
                 ))
               ) : (
