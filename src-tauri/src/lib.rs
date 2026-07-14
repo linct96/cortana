@@ -28,6 +28,7 @@ use url::Url;
 use uuid::Uuid;
 
 mod accounts;
+mod agents;
 mod analytics;
 mod billing;
 mod codex;
@@ -132,6 +133,12 @@ pub fn run() {
             accounts::reorder_profiles,
             accounts::delete_profile,
             accounts::set_codex_home,
+            agents::get_agents_status,
+            agents::create_agents_profile,
+            agents::update_agents_profile,
+            agents::activate_agents_profile,
+            agents::import_current_agents,
+            agents::delete_agents_profile,
             analytics::get_codex_usage_analytics,
             billing::list_model_pricing,
             billing::save_model_pricing,

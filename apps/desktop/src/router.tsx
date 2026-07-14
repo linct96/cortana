@@ -11,6 +11,9 @@ import { AppLayout } from './components/page-shell';
 const AnalyticsPage = lazyRouteComponent(() => import('./AnalyticsPage'));
 const BillingPage = lazyRouteComponent(() => import('./BillingPage'));
 const ConfigPage = lazyRouteComponent(() => import('./ConfigPage'));
+const PromptsPage = lazyRouteComponent(() => import('./PromptsPage'));
+const NewPromptPage = lazyRouteComponent(() => import('./PromptEditorPage'), 'NewPromptPage');
+const EditPromptPage = lazyRouteComponent(() => import('./PromptEditorPage'), 'EditPromptPage');
 const SessionsPage = lazyRouteComponent(() => import('./SessionsPage'));
 const SettingsPage = lazyRouteComponent(() => import('./SettingsPage'));
 const AboutPage = lazyRouteComponent(() => import('./SettingsPage'), 'AboutPage');
@@ -47,6 +50,24 @@ const configRoute = createRoute({
   component: ConfigPage,
 });
 
+const promptsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/prompts',
+  component: PromptsPage,
+});
+
+const newPromptRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/prompts/new',
+  component: NewPromptPage,
+});
+
+const editPromptRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/prompts/edit/$profileId',
+  component: EditPromptPage,
+});
+
 const sessionsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/sessions',
@@ -64,6 +85,9 @@ export const router = createRouter({
     indexRoute,
     sessionsRoute,
     analyticsRoute,
+    promptsRoute,
+    newPromptRoute,
+    editPromptRoute,
     settingsRoute,
     billingRoute,
     aboutRoute,
