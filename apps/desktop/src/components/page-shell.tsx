@@ -1,14 +1,18 @@
-import { Link, Outlet } from '@tanstack/react-router';
+import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import {
+  ArrowLeft,
   ChartNoAxesCombined,
   Check,
   ChevronDown,
+  CreditCard,
   FileCog,
+  Info,
   MessagesSquare,
   Settings,
+  SlidersHorizontal,
   UsersRound,
 } from 'lucide-react';
-import { type ComponentType, type ReactNode } from 'react';
+import { type ComponentType, type ReactNode, useRef } from 'react';
 import chatGptIcon from '../assets/chatgpt.svg';
 import claudeIcon from '../assets/claude.svg';
 import { cn } from '../utils';
@@ -23,6 +27,11 @@ import { WindowTitleBar } from './window-title-bar';
 
 export function AppLayout() {
   const isWindows = navigator.userAgent.includes('Windows');
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const isSettings = pathname === '/settings' || pathname.startsWith('/settings/');
+  const previousAppPath = useRef<MainPath>('/');
+
+  if (!isSettings) previousAppPath.current = pathname as MainPath;
 
   return (
     <div className="relative flex h-screen min-h-0 bg-background text-foreground">
@@ -37,42 +46,61 @@ export function AppLayout() {
           isWindows ? 'pt-9' : 'pt-12',
         )}
       >
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <button
-                type="button"
-                className="flex h-9 w-fit items-center gap-2 rounded-md px-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-accent"
-              />
-            }
-          >
-            <img src={chatGptIcon} alt="" className="size-5 shrink-0" />
-            <strong className="truncate text-base font-semibold">Codex</strong>
-            <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent sideOffset={4}>
-            <DropdownMenuGroup>
-              <DropdownMenuItem>
-                <img src={chatGptIcon} alt="" className="size-4" />
-                Codex
-                <Check className="ml-auto" />
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled>
-                <img src={claudeIcon} alt="" className="size-4" />
-                Claude
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <nav className="mt-3 flex flex-1 flex-col gap-1" aria-label="主导航">
-          <NavItem to="/" label="账号" icon={UsersRound} exact />
-          <NavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
-          <NavItem to="/analytics" label="统计分析" icon={ChartNoAxesCombined} />
-          <NavItem to="/config" label="Codex 配置" icon={FileCog} />
-        </nav>
-        <nav className="border-t border-border pt-3" aria-label="应用导航">
-          <NavItem to="/settings" label="应用设置" icon={Settings} />
-        </nav>
+        {isSettings ? (
+          <>
+            <Link
+              to={previousAppPath.current}
+              className="flex h-9 items-center gap-2 rounded-md px-2 outline-none transition-colors hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <ArrowLeft className="size-4 shrink-0" />
+              <strong className="truncate text-base font-semibold">应用设置</strong>
+            </Link>
+            <nav className="mt-3 flex flex-1 flex-col gap-1" aria-label="应用设置导航">
+              <NavItem to="/settings" label="常规" icon={SlidersHorizontal} exact />
+              <NavItem to="/settings/billing" label="计费" icon={CreditCard} />
+              <NavItem to="/settings/about" label="关于" icon={Info} />
+            </nav>
+          </>
+        ) : (
+          <>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    type="button"
+                    className="flex h-9 w-fit items-center gap-2 rounded-md px-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-accent"
+                  />
+                }
+              >
+                <img src={chatGptIcon} alt="" className="size-5 shrink-0" />
+                <strong className="truncate text-base font-semibold">Codex</strong>
+                <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent sideOffset={4}>
+                <DropdownMenuGroup>
+                  <DropdownMenuItem>
+                    <img src={chatGptIcon} alt="" className="size-4" />
+                    Codex
+                    <Check className="ml-auto" />
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled>
+                    <img src={claudeIcon} alt="" className="size-4" />
+                    Claude
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <nav className="mt-3 flex flex-1 flex-col gap-1" aria-label="主导航">
+              <NavItem to="/" label="账号" icon={UsersRound} exact />
+              <NavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
+              <NavItem to="/analytics" label="统计分析" icon={ChartNoAxesCombined} />
+              <NavItem to="/config" label="Codex 配置" icon={FileCog} />
+            </nav>
+            <nav className="border-t border-border pt-3" aria-label="应用导航">
+              <NavItem to="/settings" label="应用设置" icon={Settings} />
+            </nav>
+          </>
+        )}
       </aside>
       <div className={cn('flex min-w-0 flex-1 flex-col', isWindows ? 'pt-8' : 'pt-11')}>
         <div className="min-h-0 flex-1">
@@ -83,13 +111,17 @@ export function AppLayout() {
   );
 }
 
+type MainPath = '/' | '/sessions' | '/analytics' | '/config';
+
+type AppPath = MainPath | '/settings' | '/settings/billing' | '/settings/about';
+
 function NavItem({
   to,
   label,
   icon: Icon,
   exact = false,
 }: {
-  to: '/' | '/sessions' | '/analytics' | '/config' | '/settings';
+  to: AppPath;
   label: string;
   icon: ComponentType<{ className?: string }>;
   exact?: boolean;

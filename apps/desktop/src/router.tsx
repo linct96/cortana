@@ -8,7 +8,7 @@ import App from './App';
 import AnalyticsPage from './AnalyticsPage';
 import ConfigPage from './ConfigPage';
 import SessionsPage from './SessionsPage';
-import SettingsPage from './SettingsPage';
+import SettingsPage, { AboutPage, BillingPage } from './SettingsPage';
 import { AppLayout } from './components/page-shell';
 
 const rootRoute = createRootRoute({ component: AppLayout });
@@ -23,6 +23,18 @@ const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
   component: SettingsPage,
+});
+
+const billingRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/billing',
+  component: BillingPage,
+});
+
+const aboutRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings/about',
+  component: AboutPage,
 });
 
 const configRoute = createRoute({
@@ -49,6 +61,8 @@ export const router = createRouter({
     sessionsRoute,
     analyticsRoute,
     settingsRoute,
+    billingRoute,
+    aboutRoute,
     configRoute,
   ]),
   history: createHashHistory(),
