@@ -63,7 +63,7 @@ export default function SettingsPage() {
 
   return (
     <PageShell>
-      <PageHeader title="应用设置" className="pb-7" />
+      <PageHeader title="常规" className="pb-7" />
 
       <div className="w-full border-y border-border px-4 sm:px-8 lg:px-12">
         <section className="grid gap-4 py-6 sm:grid-cols-[12rem_minmax(0,1fr)]">
@@ -134,6 +134,22 @@ export default function SettingsPage() {
           </div>
         </section>
       </div>
+    </PageShell>
+  );
+}
+
+export function BillingPage() {
+  return (
+    <PageShell>
+      <PageHeader title="计费" />
+    </PageShell>
+  );
+}
+
+export function AboutPage() {
+  return (
+    <PageShell>
+      <PageHeader title="关于" />
     </PageShell>
   );
 }
