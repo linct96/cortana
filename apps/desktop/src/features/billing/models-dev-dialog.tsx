@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { LoaderCircle, Search, TriangleAlert } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
@@ -43,26 +43,28 @@ export function ModelsDevDialog({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reloadKey, setReloadKey] = useState(0);
+  const requestId = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadModels = useCallback(async () => {
+    const currentRequest = ++requestId.current;
     setLoading(true);
     setError(null);
-    invoke<ModelsDevPricing[]>('fetch_models_dev_pricing')
-      .then((result) => {
-        if (!cancelled) setModels(result);
-      })
-      .catch((caught) => {
-        if (!cancelled) setError(appError(caught));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    try {
+      const result = await invoke<ModelsDevPricing[]>('fetch_models_dev_pricing');
+      if (currentRequest === requestId.current) setModels(result);
+    } catch (caught) {
+      if (currentRequest === requestId.current) setError(appError(caught));
+    } finally {
+      if (currentRequest === requestId.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadModels();
     return () => {
-      cancelled = true;
+      requestId.current += 1;
     };
-  }, [reloadKey]);
+  }, [loadModels]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -169,7 +171,7 @@ export function ModelsDevDialog({
               <AlertTitle>无法加载模型价格</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
               <AlertAction>
-                <Button variant="outline" size="sm" onClick={() => setReloadKey((key) => key + 1)}>
+                <Button variant="outline" size="sm" onClick={() => void loadModels()}>
                   重试
                 </Button>
               </AlertAction>

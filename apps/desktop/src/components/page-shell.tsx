@@ -13,7 +13,7 @@ import {
   SlidersHorizontal,
   UsersRound,
 } from 'lucide-react';
-import { type ComponentType, type ReactNode, useRef } from 'react';
+import { type ComponentType, type ReactNode, useEffect, useRef } from 'react';
 import chatGptIcon from '../assets/chatgpt.svg';
 import claudeIcon from '../assets/claude.svg';
 import { cn } from '../utils';
@@ -32,10 +32,12 @@ export function AppLayout() {
   const isSettings = pathname === '/settings' || pathname.startsWith('/settings/');
   const previousAppPath = useRef<MainPath>('/');
 
-  if (!isSettings)
-    previousAppPath.current = pathname.startsWith('/prompts/')
-      ? '/prompts'
-      : (pathname as MainPath);
+  useEffect(() => {
+    if (!isSettings)
+      previousAppPath.current = pathname.startsWith('/prompts/')
+        ? '/prompts'
+        : (pathname as MainPath);
+  }, [isSettings, pathname]);
 
   return (
     <div className="relative flex h-screen min-h-0 bg-background text-foreground">
