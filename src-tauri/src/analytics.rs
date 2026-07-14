@@ -251,13 +251,14 @@ fn parse_session_file(
 }
 
 fn token_usage(value: &Value) -> Option<TokenUsage> {
-    Some(TokenUsage {
+    let usage = TokenUsage {
         input_tokens: value.get("input_tokens")?.as_u64()?,
         cached_input_tokens: value.get("cached_input_tokens")?.as_u64()?,
         output_tokens: value.get("output_tokens")?.as_u64()?,
         reasoning_output_tokens: value.get("reasoning_output_tokens")?.as_u64()?,
         total_tokens: value.get("total_tokens")?.as_u64()?,
-    })
+    };
+    (usage.input_tokens > 0 || usage.output_tokens > 0).then_some(usage)
 }
 
 impl TokenUsage {
@@ -365,6 +366,7 @@ mod tests {
             .unwrap()
             .to_rfc3339();
         let content = [
+            json!({"timestamp":timestamp,"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":4729}}}}).to_string(),
             json!({"type":"turn_context","payload":{"model":"model-a","turn_id":"turn-a"}}).to_string(),
             json!({"timestamp":timestamp,"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":3,"reasoning_output_tokens":1,"total_tokens":13},"total_token_usage":{"total_tokens":13}}}}).to_string(),
             "{incomplete".to_string(),
