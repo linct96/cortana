@@ -28,6 +28,7 @@ use url::Url;
 use uuid::Uuid;
 
 mod accounts;
+mod analytics;
 mod codex;
 mod db;
 mod oauth;
@@ -130,6 +131,7 @@ pub fn run() {
             accounts::reorder_profiles,
             accounts::delete_profile,
             accounts::set_codex_home,
+            analytics::get_codex_usage_analytics,
             codex::get_codex_config,
             codex::validate_codex_config,
             codex::format_codex_config,
