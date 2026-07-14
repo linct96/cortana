@@ -24,6 +24,7 @@ export type ResetCredits = {
 
 export type ResetCredit = {
   id: string;
+  title: string;
   status: string;
   expiresAt: string;
   grantedAt: string;

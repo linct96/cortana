@@ -67,6 +67,7 @@ pub(super) struct ResetCredits {
 #[serde(rename_all = "camelCase")]
 pub(super) struct ResetCredit {
     pub(super) id: String,
+    pub(super) title: String,
     pub(super) status: String,
     pub(super) expires_at: String,
     pub(super) granted_at: String,
