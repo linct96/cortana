@@ -54,8 +54,13 @@
   background: var(--caption-close-pressed);
 }
 
-.glyph {
-  font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets';
-  font-size: 10px;
-  line-height: 1;
+.icon {
+  width: 10px;
+  height: 10px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
 }
