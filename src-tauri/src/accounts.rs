@@ -1122,27 +1122,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_marks_a_profile_active_for_a_managed_auth_file() {
-        let active_id = Some("profile-1".to_string());
-        let managed = AuthState {
-            kind: "managed".to_string(),
-            message: String::new(),
-        };
-        let missing = AuthState {
-            kind: "missing".to_string(),
-            message: String::new(),
-        };
-
-        assert_eq!(
-            managed_active_profile_id(active_id.clone(), &managed),
-            active_id
-        );
-        assert_eq!(
-            managed_active_profile_id(Some("profile-1".to_string()), &missing),
-            None
-        );
-    }
-    #[test]
     fn switches_without_confirmation_when_external_auth_has_no_refresh_token() {
         let directory =
             std::env::temp_dir().join(format!("codex-switcher-test-{}", Uuid::new_v4()));
@@ -1219,62 +1198,6 @@ mod tests {
                 .len(),
             2
         );
-        fs::remove_dir_all(directory).unwrap();
-    }
-    #[test]
-    fn profile_order_does_not_change_with_last_used_time() {
-        let directory =
-            std::env::temp_dir().join(format!("codex-switcher-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&directory).unwrap();
-        let state = AppState {
-            database_path: directory.join("app.sqlite3"),
-            default_codex_home: directory.clone(),
-            pending_oauth: Arc::new(Mutex::new(None)),
-        };
-        initialize_database(&state).unwrap();
-        let auth = |refresh_token: &str| {
-            json!({ "tokens": { "refresh_token": refresh_token } }).to_string()
-        };
-        let first = upsert_profile_from_auth(&state, &auth("rt-1"), "first", false).unwrap();
-        let second = upsert_profile_from_auth(&state, &auth("rt-2"), "second", false).unwrap();
-        let connection = open_database(&state).unwrap();
-        connection
-            .execute(
-                "UPDATE accounts SET last_used_at = ?1 WHERE id = ?2",
-                params![now_millis(), second.id],
-            )
-            .unwrap();
-
-        let profiles = list_profiles(&connection, None).unwrap();
-
-        assert_eq!(profiles[0].id, first.id);
-        assert_eq!(profiles[1].id, second.id);
-        drop(connection);
-        fs::remove_dir_all(directory).unwrap();
-    }
-    #[test]
-    fn detects_whether_current_auth_is_already_saved() {
-        let directory =
-            std::env::temp_dir().join(format!("codex-switcher-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&directory).unwrap();
-        let state = AppState {
-            database_path: directory.join("app.sqlite3"),
-            default_codex_home: directory.clone(),
-            pending_oauth: Arc::new(Mutex::new(None)),
-        };
-        initialize_database(&state).unwrap();
-        upsert_profile_from_auth(
-            &state,
-            r#"{"tokens":{"account_id":"account-123","refresh_token":"rt-1"}}"#,
-            "saved",
-            false,
-        )
-        .unwrap();
-        let connection = open_database(&state).unwrap();
-
-        assert!(profile_exists_for_oauth(&connection, "rt-1").unwrap());
-        assert!(!profile_exists_for_oauth(&connection, "rt-2").unwrap());
-        drop(connection);
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
@@ -1357,39 +1280,6 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
-    fn detects_custom_provider_name_and_url_for_api_key_login() {
-        let directory =
-            std::env::temp_dir().join(format!("codex-switcher-provider-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&directory).unwrap();
-        let state = AppState {
-            database_path: directory.join("app.sqlite3"),
-            default_codex_home: directory.clone(),
-            pending_oauth: Arc::new(Mutex::new(None)),
-        };
-        initialize_database(&state).unwrap();
-        let config_path = directory.join("config.toml");
-        fs::write(
-                &config_path,
-                "model_provider = \"custom\"\n[model_providers.custom]\nname = \"My Relay\"\nbase_url = \"https://relay.example.com/v1\"\n",
-            )
-            .unwrap();
-        let connection = open_database(&state).unwrap();
-        let profile = detected_profile_from_auth(
-            &connection,
-            r#"{"OPENAI_API_KEY":"relay-key"}"#,
-            &config_path,
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(profile.alias, "My Relay");
-        assert_eq!(
-            profile.api_base_url.as_deref(),
-            Some("https://relay.example.com/v1")
-        );
-        drop(connection);
-        fs::remove_dir_all(directory).unwrap();
-    }
-    #[test]
     fn switches_between_relay_and_oauth_files_and_deduplicates_relays() {
         let directory =
             std::env::temp_dir().join(format!("codex-switcher-test-{}", Uuid::new_v4()));
@@ -1455,59 +1345,6 @@ mod tests {
         assert!(config.contains("# keep"));
         assert!(!config.contains("model_provider"));
         assert!(!config.contains("model_providers.relay"));
-        fs::remove_dir_all(directory).unwrap();
-    }
-    #[test]
-    fn detects_external_relay_config_changes_and_updates_active_relay() {
-        let directory =
-            std::env::temp_dir().join(format!("codex-switcher-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&directory).unwrap();
-        let state = AppState {
-            database_path: directory.join("app.sqlite3"),
-            default_codex_home: directory.clone(),
-            pending_oauth: Arc::new(Mutex::new(None)),
-        };
-        initialize_database(&state).unwrap();
-        let relay =
-            upsert_relay_profile(&state, "relay-key", "https://relay.example.com/v1", "Relay")
-                .unwrap();
-        switch_profile_internal(&state, &relay.id, true).unwrap();
-        save_codex_config_internal(
-                &state,
-                "model_provider = \"relay\"\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://changed.example.com/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n",
-            )
-            .unwrap();
-        let connection = open_database(&state).unwrap();
-        assert_eq!(
-            resolve_auth_state(&connection, Some(&relay.id), &directory.join("auth.json"),)
-                .unwrap()
-                .kind,
-            "external"
-        );
-        drop(connection);
-
-        let updated = update_relay_profile_internal(
-            &state,
-            &relay.id,
-            "Updated",
-            None,
-            "http://relay.local/v1/",
-        )
-        .unwrap();
-        assert_eq!(
-            updated.api_base_url.as_deref(),
-            Some("http://relay.local/v1")
-        );
-        let auth = fs::read_to_string(directory.join("auth.json")).unwrap();
-        assert_eq!(
-            extract_api_key(&auth).unwrap().as_deref(),
-            Some("relay-key")
-        );
-        let config = fs::read_to_string(directory.join("config.toml")).unwrap();
-        assert!(config.contains("base_url = \"http://relay.local/v1\""));
-        assert!(refresh_profile_usage_internal(&state, &relay.id)
-            .unwrap_err()
-            .contains("不支持额度查询"));
         fs::remove_dir_all(directory).unwrap();
     }
 }

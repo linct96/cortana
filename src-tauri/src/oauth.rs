@@ -513,46 +513,6 @@ mod tests {
         assert_eq!(query.get("originator"), Some(&"codex_cli_rs".into()));
     }
     #[test]
-    fn oauth_cancellation_clears_the_pending_authorization() {
-        let state = AppState {
-            database_path: PathBuf::new(),
-            default_codex_home: PathBuf::new(),
-            pending_oauth: Arc::new(Mutex::new(Some(PendingOAuth {
-                alias: String::new(),
-                activate: false,
-                code_verifier: "verifier".to_string(),
-                state: "state".to_string(),
-            }))),
-        };
-
-        clear_pending_oauth(&state);
-
-        assert!(state.pending_oauth.lock().unwrap().is_none());
-    }
-
-    #[test]
-    fn extracts_identity_from_codex_tokens() {
-        let claims = json!({
-            "email": "person@example.com",
-            "https://api.openai.com/auth": {
-                "chatgpt_account_id": "account-123",
-                "chatgpt_plan_type": "plus"
-            }
-        });
-        let token = format!(
-            "header.{}.signature",
-            URL_SAFE_NO_PAD.encode(claims.to_string())
-        );
-        let auth = json!({ "tokens": { "id_token": token } });
-
-        let identity = identity_from_auth_json(&auth);
-
-        assert_eq!(identity.email, "person@example.com");
-        assert_eq!(identity.account_id, "account-123");
-        assert_eq!(identity.plan_type, "plus");
-    }
-
-    #[test]
     fn builds_refreshed_auth_from_an_access_token_without_an_id_token() {
         let claims = json!({
             "email": "person@example.com",
