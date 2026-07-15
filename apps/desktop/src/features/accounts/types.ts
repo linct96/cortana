@@ -8,8 +8,6 @@ export type Profile = {
   planType: string;
   usagePrimary: UsageWindow | null;
   usageSecondary: UsageWindow | null;
-  creditsBalance: string | null;
-  creditsUnlimited: boolean;
   usageUpdatedAt: number | null;
   resetCreditsAvailableCount: number | null;
   isActive: boolean;
@@ -37,14 +35,13 @@ export type UsageWindow = {
 };
 
 export type AuthState = {
-  kind: 'managed' | 'external' | 'unmanaged' | 'missing';
+  kind: 'managed' | 'unmanaged' | 'missing';
   message: string;
 };
 
 export type AppStatus = {
   profiles: Profile[];
   detectedProfile: Profile | null;
-  activeProfileId: string | null;
   authPath: string;
   authState: AuthState;
   autostartEnabled: boolean;

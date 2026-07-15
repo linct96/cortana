@@ -36,11 +36,12 @@ pub(super) fn import_auth_json_internal(
         state,
         &refreshed_auth_json,
         alias.unwrap_or_default().trim(),
-        false,
     )?;
-    if activate {
-        switch_profile_internal(state, &profile.id, true)?;
-    }
+    let profile = if activate {
+        switch_profile_internal(state, &profile.id, true)?
+    } else {
+        profile
+    };
     refresh_tray(app)?;
     Ok(profile)
 }
@@ -273,10 +274,12 @@ pub(super) fn complete_oauth_callback(
     }
     pending_guard.take();
     drop(pending_guard);
-    let profile = upsert_profile_from_auth(state, &auth_json, &pending.alias, false)?;
-    if pending.activate {
-        switch_profile_internal(state, &profile.id, true)?;
-    }
+    let profile = upsert_profile_from_auth(state, &auth_json, &pending.alias)?;
+    let profile = if pending.activate {
+        switch_profile_internal(state, &profile.id, true)?
+    } else {
+        profile
+    };
     refresh_tray(app)?;
     Ok(profile)
 }

@@ -47,8 +47,6 @@ pub(super) struct ProfileSummary {
     pub(super) plan_type: String,
     pub(super) usage_primary: Option<UsageWindow>,
     pub(super) usage_secondary: Option<UsageWindow>,
-    pub(super) credits_balance: Option<String>,
-    pub(super) credits_unlimited: bool,
     pub(super) usage_updated_at: Option<i64>,
     pub(super) reset_credits_available_count: Option<i64>,
     pub(super) is_active: bool,
@@ -86,7 +84,6 @@ pub(super) struct UsageWindow {
 pub(super) struct AppStatus {
     pub(super) profiles: Vec<ProfileSummary>,
     pub(super) detected_profile: Option<ProfileSummary>,
-    pub(super) active_profile_id: Option<String>,
     pub(super) auth_path: String,
     pub(super) auth_state: AuthState,
     pub(super) autostart_enabled: bool,

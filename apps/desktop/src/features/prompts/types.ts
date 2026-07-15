@@ -7,7 +7,6 @@ export type AgentsProfile = {
 
 export type AgentsStatus = {
   profiles: AgentsProfile[];
-  activeProfileId: string | null;
   path: string;
-  fileState: 'managed' | 'external' | 'unmanaged' | 'missing';
+  fileState: 'managed' | 'unmanaged' | 'missing';
 };

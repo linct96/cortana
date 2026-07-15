@@ -49,7 +49,6 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
   const [savedName, setSavedName] = useState('');
   const [savedContent, setSavedContent] = useState('');
   const [busy, setBusy] = useState(Boolean(profileId));
-  const [forceSave, setForceSave] = useState(false);
   const requestId = useRef(0);
   const dirty = name !== savedName || content !== savedContent;
   const blocker = useBlocker({
@@ -84,16 +83,15 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
     };
   }, [profileId]);
 
-  async function save(event?: FormEvent, force = false) {
+  async function save(event?: FormEvent) {
     event?.preventDefault();
     setBusy(true);
     try {
       if (profileId) {
-        await invoke('update_agents_profile', { profileId, name, content, force });
+        await invoke('update_agents_profile', { profileId, name, content });
         setSavedName(name.trim());
         setName(name.trim());
         setSavedContent(content);
-        setForceSave(false);
         toast.success('提示词已保存。');
       } else {
         await invoke('create_agents_profile', { name, content });
@@ -101,9 +99,7 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
         await navigate({ to: '/prompts', ignoreBlocker: true });
       }
     } catch (error) {
-      const message = appError(error);
-      if (!force && message.includes('工具外')) setForceSave(true);
-      else toast.error(message);
+      toast.error(appError(error));
     } finally {
       setBusy(false);
     }
@@ -129,12 +125,10 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
         content={content}
         busy={busy}
         dirty={dirty}
-        forceSave={forceSave}
         navigationBlocked={blocker.status === 'blocked'}
         onNameChange={setName}
         onContentChange={setContent}
         onSave={save}
-        onCloseForce={() => setForceSave(false)}
         onResetNavigation={() => blocker.reset?.()}
         onProceedNavigation={() => blocker.proceed?.()}
       />
@@ -147,12 +141,10 @@ function PromptEditorContent({
   content,
   busy,
   dirty,
-  forceSave,
   navigationBlocked,
   onNameChange,
   onContentChange,
   onSave,
-  onCloseForce,
   onResetNavigation,
   onProceedNavigation,
 }: {
@@ -160,12 +152,10 @@ function PromptEditorContent({
   content: string;
   busy: boolean;
   dirty: boolean;
-  forceSave: boolean;
   navigationBlocked: boolean;
   onNameChange: (name: string) => void;
   onContentChange: (content: string) => void;
-  onSave: (event?: FormEvent, force?: boolean) => Promise<void>;
-  onCloseForce: () => void;
+  onSave: (event?: FormEvent) => Promise<void>;
   onResetNavigation: () => void;
   onProceedNavigation: () => void;
 }) {
@@ -200,7 +190,7 @@ function PromptEditorContent({
           </Field>
         </FieldGroup>
         <div className="mt-4 flex shrink-0 justify-end">
-          <Button type="submit" disabled={busy || !dirty || !name.trim()}>
+          <Button type="submit" disabled={busy || !dirty || !name.trim() || !content.trim()}>
             {busy ? (
               <LoaderCircle data-icon="inline-start" className="animate-spin" />
             ) : (
@@ -210,15 +200,6 @@ function PromptEditorContent({
           </Button>
         </div>
       </form>
-      <ConfirmDialog
-        open={forceSave}
-        title="覆盖工具外修改"
-        description="继续保存会用当前内容覆盖 AGENTS.md。"
-        confirmLabel="强制覆盖"
-        busy={busy}
-        onClose={onCloseForce}
-        onConfirm={() => void onSave(undefined, true)}
-      />
       <ConfirmDialog
         open={navigationBlocked}
         title="离开编辑页面"

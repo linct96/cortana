@@ -18,16 +18,31 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
               cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
               cache_write_cost_per_million TEXT NOT NULL DEFAULT '0'
             );
-            CREATE TABLE IF NOT EXISTS agents_profiles (
-              id TEXT PRIMARY KEY NOT NULL,
-              name TEXT NOT NULL COLLATE NOCASE UNIQUE,
-              content TEXT NOT NULL,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            );
             ",
         )
         .map_err(database_error)?;
+    let has_agents_profiles = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agents_profiles')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(database_error)?;
+    let has_instruction_profiles = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'instruction_profiles')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(database_error)?;
+    if has_agents_profiles && !has_instruction_profiles {
+        connection
+            .execute(
+                "ALTER TABLE agents_profiles RENAME TO instruction_profiles",
+                [],
+            )
+            .map_err(database_error)?;
+    }
     let has_profiles = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'profiles')",
@@ -50,6 +65,13 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
     connection
         .execute_batch(
             "
+            CREATE TABLE IF NOT EXISTS instruction_profiles (
+              id TEXT PRIMARY KEY NOT NULL,
+              name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+              content TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS accounts (
               id TEXT PRIMARY KEY NOT NULL,
               account_type TEXT NOT NULL DEFAULT 'oauth',
@@ -59,15 +81,12 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
               alias TEXT NOT NULL,
               plan_type TEXT NOT NULL DEFAULT '',
               auth_json TEXT NOT NULL,
-              auth_hash TEXT NOT NULL,
               usage_primary_percent REAL,
               usage_primary_window_minutes INTEGER,
               usage_primary_resets_at INTEGER,
               usage_secondary_percent REAL,
               usage_secondary_window_minutes INTEGER,
               usage_secondary_resets_at INTEGER,
-              credits_balance TEXT,
-              credits_unlimited INTEGER NOT NULL DEFAULT 0,
               usage_updated_at INTEGER,
               reset_credits_available_count INTEGER,
               created_at INTEGER NOT NULL,
@@ -77,8 +96,9 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
             );
             DROP INDEX IF EXISTS profiles_account_id_idx;
             DROP INDEX IF EXISTS profiles_auth_hash_idx;
+            DROP INDEX IF EXISTS accounts_auth_hash_idx;
+            DROP INDEX IF EXISTS accounts_relay_idx;
             CREATE INDEX IF NOT EXISTS accounts_account_id_idx ON accounts(account_id);
-            CREATE INDEX IF NOT EXISTS accounts_auth_hash_idx ON accounts(auth_hash);
             ",
         )
         .map_err(database_error)?;
@@ -92,39 +112,28 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
         ("usage_secondary_percent", "REAL"),
         ("usage_secondary_window_minutes", "INTEGER"),
         ("usage_secondary_resets_at", "INTEGER"),
-        ("credits_balance", "TEXT"),
-        ("credits_unlimited", "INTEGER NOT NULL DEFAULT 0"),
         ("usage_updated_at", "INTEGER"),
         ("reset_credits_available_count", "INTEGER"),
     ] {
         ensure_account_column(&connection, name, definition)?;
     }
-    connection
-        .execute(
-            "CREATE INDEX IF NOT EXISTS accounts_relay_idx ON accounts(account_type, api_base_url, auth_hash)",
-            [],
-        )
-        .map_err(database_error)?;
+    for name in ["credits_balance", "credits_unlimited", "auth_hash"] {
+        if account_column_exists(&connection, name)? {
+            connection
+                .execute(&format!("ALTER TABLE accounts DROP COLUMN {name}"), [])
+                .map_err(database_error)?;
+        }
+    }
     let added_sort_order =
         ensure_account_column(&connection, "sort_order", "INTEGER NOT NULL DEFAULT 0")?;
     if added_sort_order {
-        let mut profile_ids = connection
+        let profile_ids = connection
             .prepare("SELECT id FROM accounts ORDER BY last_used_at DESC, created_at ASC")
             .map_err(database_error)?
             .query_map([], |row| row.get::<_, String>(0))
             .map_err(database_error)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(database_error)?;
-        if let Some(order) = get_setting(&connection, "profile_order")?
-            .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
-        {
-            let positions = order
-                .into_iter()
-                .enumerate()
-                .map(|(index, id)| (id, index))
-                .collect::<HashMap<_, _>>();
-            profile_ids.sort_by_key(|id| positions.get(id).copied().unwrap_or(usize::MAX));
-        }
         let transaction = connection.transaction().map_err(database_error)?;
         for (sort_order, profile_id) in profile_ids.iter().enumerate() {
             transaction
@@ -134,11 +143,14 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
                 )
                 .map_err(database_error)?;
         }
-        transaction
-            .execute("DELETE FROM settings WHERE key = 'profile_order'", [])
-            .map_err(database_error)?;
         transaction.commit().map_err(database_error)?;
     }
+    connection
+        .execute(
+            "DELETE FROM settings WHERE key IN ('profile_order', 'active_profile_id', 'active_agents_profile_id')",
+            [],
+        )
+        .map_err(database_error)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -153,13 +165,7 @@ pub(super) fn ensure_account_column(
     name: &str,
     definition: &str,
 ) -> Result<bool, String> {
-    let exists = connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('accounts') WHERE name = ?1)",
-            params![name],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(database_error)?;
+    let exists = account_column_exists(connection, name)?;
     if !exists {
         connection
             .execute(
@@ -169,6 +175,16 @@ pub(super) fn ensure_account_column(
             .map_err(database_error)?;
     }
     Ok(!exists)
+}
+
+fn account_column_exists(connection: &Connection, name: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('accounts') WHERE name = ?1)",
+            params![name],
+            |row| row.get(0),
+        )
+        .map_err(database_error)
 }
 
 pub(super) fn open_database(state: &AppState) -> Result<Connection, String> {
@@ -198,4 +214,74 @@ pub(super) fn set_setting(connection: &Connection, key: &str, value: &str) -> Re
         )
         .map_err(database_error)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_legacy_database() {
+        let directory = std::env::temp_dir().join(format!("cortana-db-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let state = AppState {
+            database_path: directory.join("app.sqlite3"),
+            default_codex_home: directory.clone(),
+            pending_oauth: Arc::new(Mutex::new(None)),
+        };
+        let connection = open_database(&state).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE agents_profiles (
+                   id TEXT PRIMARY KEY NOT NULL,
+                   name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                   content TEXT NOT NULL,
+                   created_at INTEGER NOT NULL,
+                   updated_at INTEGER NOT NULL
+                 );
+                 INSERT INTO agents_profiles VALUES ('default', 'Default', '# Rules', 1, 1);",
+            )
+            .unwrap();
+        drop(connection);
+
+        initialize_database(&state).unwrap();
+        let connection = open_database(&state).unwrap();
+        connection
+            .execute_batch(
+                "ALTER TABLE accounts ADD COLUMN credits_balance TEXT;
+                 ALTER TABLE accounts ADD COLUMN credits_unlimited INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE accounts ADD COLUMN auth_hash TEXT;
+                 CREATE INDEX accounts_auth_hash_idx ON accounts(auth_hash);",
+            )
+            .unwrap();
+        set_setting(&connection, "profile_order", "[]").unwrap();
+        set_setting(&connection, "active_profile_id", "legacy-account").unwrap();
+        set_setting(&connection, "active_agents_profile_id", "legacy-prompt").unwrap();
+        drop(connection);
+
+        initialize_database(&state).unwrap();
+
+        let connection = open_database(&state).unwrap();
+        assert!(!account_column_exists(&connection, "credits_balance").unwrap());
+        assert!(!account_column_exists(&connection, "credits_unlimited").unwrap());
+        assert!(!account_column_exists(&connection, "auth_hash").unwrap());
+        assert_eq!(get_setting(&connection, "profile_order").unwrap(), None);
+        assert_eq!(get_setting(&connection, "active_profile_id").unwrap(), None);
+        assert_eq!(
+            get_setting(&connection, "active_agents_profile_id").unwrap(),
+            None
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT content FROM instruction_profiles WHERE id = 'default'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "# Rules"
+        );
+        drop(connection);
+        fs::remove_dir_all(directory).unwrap();
+    }
 }

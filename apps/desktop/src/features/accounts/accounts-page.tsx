@@ -7,7 +7,6 @@ import {
   LogIn,
   Plus,
   RefreshCw,
-  ShieldAlert,
   Server,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
@@ -27,7 +26,6 @@ const statusStyles: Record<
   { icon: ComponentType<{ size?: number }>; iconClass: string }
 > = {
   managed: { icon: CircleCheck, iconClass: 'bg-primary/10 text-primary' },
-  external: { icon: ShieldAlert, iconClass: 'bg-secondary text-secondary-foreground' },
   unmanaged: { icon: CircleAlert, iconClass: 'bg-secondary text-secondary-foreground' },
   missing: { icon: CircleAlert, iconClass: 'bg-secondary text-secondary-foreground' },
 };

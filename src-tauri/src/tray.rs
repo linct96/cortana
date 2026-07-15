@@ -50,10 +50,8 @@ pub(super) fn refresh_tray(app: &tauri::AppHandle) -> Result<(), String> {
 pub(super) fn build_tray_menu(app: &tauri::AppHandle) -> Result<Menu<tauri::Wry>, String> {
     let state = app.state::<AppState>();
     let connection = open_database(&state)?;
-    let configured_active_id = get_setting(&connection, "active_profile_id")?;
     let path = auth_path(&state)?;
-    let auth_state = resolve_auth_state(&connection, configured_active_id.as_deref(), &path)?;
-    let active_id = managed_active_profile_id(configured_active_id, &auth_state);
+    let (_, active_id) = resolve_auth_state(&connection, &path)?;
     let profiles = list_profiles(&connection, active_id.as_deref())?;
     let menu = Menu::new(app).map_err(|error| error.to_string())?;
     let current_label = profiles

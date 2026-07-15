@@ -158,18 +158,6 @@ pub(super) fn read_provider_config(
     ))
 }
 
-pub(super) fn relay_config_matches(
-    path: &Path,
-    expected_api_base_url: Option<&str>,
-) -> Result<bool, String> {
-    let Some(expected_api_base_url) = expected_api_base_url else {
-        return Ok(false);
-    };
-    let (model_provider, _, api_base_url) = read_provider_config(path)?;
-    Ok(model_provider.as_deref() == Some(RELAY_MODEL_PROVIDER)
-        && api_base_url.as_deref() == Some(expected_api_base_url))
-}
-
 pub(super) fn read_auth_json(path: &Path) -> Result<Option<String>, String> {
     if !path.exists() {
         return Ok(None);
@@ -351,10 +339,6 @@ pub(super) fn extract_refresh_token(auth_json: &str) -> Result<String, String> {
         .filter(|token| !token.is_empty())
         .map(str::to_string)
         .ok_or_else(|| "auth.json 缺少 refresh_token。".to_string())
-}
-
-pub(super) fn auth_hash(auth_json: &str) -> String {
-    format!("{:x}", Sha256::digest(auth_json.as_bytes()))
 }
 
 #[cfg(test)]
