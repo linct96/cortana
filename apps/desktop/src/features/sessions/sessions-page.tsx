@@ -48,9 +48,17 @@ export default function SessionsPage() {
   const requestId = useRef(0);
 
   const loadSessions = useCallback(
-    async (targetArchived: boolean, targetSearchTerm: string, cursor: string | null = null) => {
+    async (
+      targetArchived: boolean,
+      targetSearchTerm: string,
+      cursor: string | null = null,
+      minimumDuration = 0,
+    ) => {
       const append = cursor !== null;
       const currentRequest = ++requestId.current;
+      const minimumWait = minimumDuration
+        ? new Promise((resolve) => setTimeout(resolve, minimumDuration))
+        : Promise.resolve();
       setLoading(append ? 'more' : 'list');
       if (!append) setError(null);
       try {
@@ -68,6 +76,7 @@ export default function SessionsPage() {
         setError(message);
         toast.error(message);
       } finally {
+        await minimumWait;
         if (currentRequest === requestId.current) setLoading(null);
       }
     },
@@ -162,7 +171,7 @@ export default function SessionsPage() {
                 variant="ghost"
                 size="icon"
                 type="button"
-                onClick={() => void loadSessions(archived, searchTerm)}
+                onClick={() => void loadSessions(archived, searchTerm, null, 400)}
                 disabled={loading === 'list'}
               >
                 <RefreshCw className={loading === 'list' ? 'animate-spin' : ''} />

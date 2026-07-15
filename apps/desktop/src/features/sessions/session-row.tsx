@@ -46,7 +46,9 @@ export function SessionRow({
   const title = session.name?.trim() || session.preview.trim() || '未命名会话';
   const showPreview = Boolean(session.name && session.preview.trim() && session.preview !== title);
   const source =
-    { cli: 'CLI', vscode: 'VS Code', appServer: 'App', unknown: '其他' }[session.source] ?? '其他';
+    { cli: 'CLI', vscode: 'Codex App / VS Code', appServer: 'App', unknown: '其他' }[
+      session.source
+    ] ?? '其他';
   const updatedAt = new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
