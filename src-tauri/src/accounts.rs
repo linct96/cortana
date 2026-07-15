@@ -49,8 +49,7 @@ pub(super) async fn import_current_profile(
             let profile = upsert_relay_profile(&state, &api_key, &api_base_url, alias)?;
             switch_profile_internal(&state, &profile.id, true)?
         } else {
-            let profile =
-                upsert_profile_from_auth(&state, &auth_json, requested_alias.trim(), false)?;
+            let profile = upsert_profile_from_auth(&state, &auth_json, requested_alias.trim())?;
             switch_profile_internal(&state, &profile.id, true)?
         };
         refresh_tray(&app)?;
@@ -237,21 +236,13 @@ pub(super) fn delete_profile(
     state: State<'_, AppState>,
     profile_id: String,
 ) -> Result<(), String> {
-    let mut connection = open_database(&state)?;
-    let active_id = get_setting(&connection, "active_profile_id")?;
-    let transaction = connection.transaction().map_err(database_error)?;
-    let changed = transaction
+    let connection = open_database(&state)?;
+    let changed = connection
         .execute("DELETE FROM accounts WHERE id = ?1", params![profile_id])
         .map_err(database_error)?;
     if changed == 0 {
         return Err("账户不存在。".to_string());
     }
-    if active_id.as_deref() == Some(profile_id.as_str()) {
-        transaction
-            .execute("DELETE FROM settings WHERE key = 'active_profile_id'", [])
-            .map_err(database_error)?;
-    }
-    transaction.commit().map_err(database_error)?;
     refresh_tray(&app)
 }
 
@@ -270,22 +261,17 @@ pub(super) fn set_codex_home(
 
 pub(super) fn app_status(app: &tauri::AppHandle, state: &AppState) -> Result<AppStatus, String> {
     let connection = open_database(state)?;
-    let configured_active_profile_id = get_setting(&connection, "active_profile_id")?;
     let auth_path = auth_path(state)?;
-    let auth_state = resolve_auth_state(
-        &connection,
-        configured_active_profile_id.as_deref(),
-        &auth_path,
-    )?;
-    let active_profile_id = managed_active_profile_id(configured_active_profile_id, &auth_state);
+    let (auth_state, active_profile_id) = resolve_auth_state(&connection, &auth_path)?;
     let profiles = list_profiles(&connection, active_profile_id.as_deref())?;
-    let detected_profile = read_auth_json(&auth_path)?
+    let detected_profile = active_profile_id
+        .is_none()
+        .then(|| read_auth_json(&auth_path))
+        .transpose()?
+        .flatten()
+        .filter(|auth_json| has_usable_credential(auth_json))
         .map(|auth_json| {
-            detected_profile_from_auth(
-                &connection,
-                &auth_json,
-                &auth_path.with_file_name("config.toml"),
-            )
+            detected_profile_from_auth(auth_json.as_str(), &auth_path.with_file_name("config.toml"))
         })
         .transpose()?
         .flatten();
@@ -293,7 +279,6 @@ pub(super) fn app_status(app: &tauri::AppHandle, state: &AppState) -> Result<App
     Ok(AppStatus {
         profiles,
         detected_profile,
-        active_profile_id,
         auth_path: auth_path.display().to_string(),
         auth_state,
         autostart_enabled,
@@ -305,7 +290,7 @@ pub(super) fn list_profiles(
     active_id: Option<&str>,
 ) -> Result<Vec<ProfileSummary>, String> {
     let mut statement = connection
-        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, credits_balance, credits_unlimited, usage_updated_at, last_used_at, updated_at, reset_credits_available_count FROM accounts ORDER BY sort_order ASC, created_at ASC")
+        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count FROM accounts ORDER BY sort_order ASC, created_at ASC")
         .map_err(database_error)?;
     let rows = statement
         .query_map([], |row| profile_summary_from_row(row, active_id))
@@ -314,15 +299,6 @@ pub(super) fn list_profiles(
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
     Ok(profiles)
-}
-
-pub(super) fn managed_active_profile_id(
-    active_id: Option<String>,
-    auth_state: &AuthState,
-) -> Option<String> {
-    (auth_state.kind == "managed")
-        .then_some(active_id)
-        .flatten()
 }
 
 pub(super) fn profile_summary_from_row(
@@ -355,12 +331,10 @@ pub(super) fn profile_summary_from_row(
             window_minutes: secondary_window_minutes,
             resets_at: secondary_resets_at,
         }),
-        credits_balance: row.get(13)?,
-        credits_unlimited: row.get(14)?,
-        usage_updated_at: row.get(15)?,
-        reset_credits_available_count: row.get(18)?,
-        last_used_at: row.get(16)?,
-        updated_at: row.get(17)?,
+        usage_updated_at: row.get(13)?,
+        reset_credits_available_count: row.get(16)?,
+        last_used_at: row.get(14)?,
+        updated_at: row.get(15)?,
     })
 }
 
@@ -371,7 +345,7 @@ pub(super) fn get_profile_summary(
 ) -> Result<ProfileSummary, String> {
     connection
         .query_row(
-            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, credits_balance, credits_unlimited, usage_updated_at, last_used_at, updated_at, reset_credits_available_count FROM accounts WHERE id = ?1",
+            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count FROM accounts WHERE id = ?1",
             params![profile_id],
             |row| profile_summary_from_row(row, active_id),
         )
@@ -381,7 +355,6 @@ pub(super) fn get_profile_summary(
 }
 
 pub(super) fn detected_profile_from_auth(
-    connection: &Connection,
     auth_json: &str,
     config_path: &Path,
 ) -> Result<Option<ProfileSummary>, String> {
@@ -389,9 +362,6 @@ pub(super) fn detected_profile_from_auth(
         serde_json::from_str(auth_json).map_err(|_| "auth.json 不是有效的 JSON。".to_string())?;
     if extract_api_key_from_value(&auth).is_some() {
         let (_, provider_name, api_base_url) = read_provider_config(config_path)?;
-        if profile_exists_for_relay(connection, auth_json, api_base_url.as_deref())? {
-            return Ok(None);
-        }
         let alias = provider_name
             .as_deref()
             .map(str::trim)
@@ -415,8 +385,6 @@ pub(super) fn detected_profile_from_auth(
             plan_type: String::new(),
             usage_primary: None,
             usage_secondary: None,
-            credits_balance: None,
-            credits_unlimited: false,
             usage_updated_at: None,
             reset_credits_available_count: None,
             is_active: true,
@@ -425,10 +393,6 @@ pub(super) fn detected_profile_from_auth(
         }));
     }
     let identity = identity_from_auth_json(&auth);
-    let refresh_token = extract_refresh_token(auth_json).unwrap_or_default();
-    if profile_exists_for_oauth(connection, &refresh_token)? {
-        return Ok(None);
-    }
 
     let now = now_millis();
     let usage = fetch_account_usage(auth_json, &identity.account_id).ok();
@@ -447,13 +411,6 @@ pub(super) fn detected_profile_from_auth(
             .unwrap_or(identity.plan_type),
         usage_primary: usage.as_ref().and_then(|usage| usage.primary.clone()),
         usage_secondary: usage.as_ref().and_then(|usage| usage.secondary.clone()),
-        credits_balance: usage
-            .as_ref()
-            .and_then(|usage| usage.credits_balance.clone()),
-        credits_unlimited: usage
-            .as_ref()
-            .map(|usage| usage.credits_unlimited)
-            .unwrap_or(false),
         usage_updated_at: usage.map(|_| now),
         reset_credits_available_count: None,
         is_active: true,
@@ -462,90 +419,74 @@ pub(super) fn detected_profile_from_auth(
     }))
 }
 
-pub(super) fn profile_exists_for_oauth(
-    connection: &Connection,
-    refresh_token: &str,
-) -> Result<bool, String> {
-    connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM accounts WHERE account_type = 'oauth' AND ?1 <> '' AND trim(COALESCE(json_extract(auth_json, '$.tokens.refresh_token'), '')) = ?1)",
-            params![refresh_token],
-            |row| row.get(0),
-        )
-        .map_err(database_error)
-}
-
-pub(super) fn profile_exists_for_relay(
+pub(super) fn profile_id_for_auth(
     connection: &Connection,
     auth_json: &str,
-    api_base_url: Option<&str>,
-) -> Result<bool, String> {
-    let Some(api_base_url) = api_base_url else {
-        return Ok(false);
+    config_path: &Path,
+) -> Result<Option<String>, String> {
+    if let Some(api_key) = extract_api_key(auth_json)? {
+        let (_, _, api_base_url) = read_provider_config(config_path)?;
+        let Some(api_base_url) = api_base_url.and_then(|url| normalize_api_base_url(&url).ok())
+        else {
+            return Ok(None);
+        };
+        return connection
+            .query_row(
+                "SELECT id FROM accounts WHERE account_type = 'relay' AND api_base_url = ?1 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?2 LIMIT 1",
+                params![api_base_url, api_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(database_error);
+    }
+    let Ok(refresh_token) = extract_refresh_token(auth_json) else {
+        return Ok(None);
     };
     connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM accounts WHERE account_type = 'relay' AND auth_hash = ?1 AND api_base_url = ?2)",
-            params![auth_hash(auth_json), api_base_url],
+            "SELECT id FROM accounts WHERE account_type = 'oauth' AND trim(COALESCE(json_extract(auth_json, '$.tokens.refresh_token'), '')) = ?1 LIMIT 1",
+            params![refresh_token],
             |row| row.get(0),
         )
+        .optional()
         .map_err(database_error)
 }
 
 pub(super) fn resolve_auth_state(
     connection: &Connection,
-    active_id: Option<&str>,
     path: &Path,
-) -> Result<AuthState, String> {
+) -> Result<(AuthState, Option<String>), String> {
     let Some(auth_json) = read_auth_json(path)? else {
-        return Ok(AuthState {
-            kind: "missing".to_string(),
-            message: "尚未检测到 Codex 登录文件。".to_string(),
-        });
+        return Ok((
+            AuthState {
+                kind: "missing".to_string(),
+                message: "尚未检测到 Codex 登录文件。".to_string(),
+            },
+            None,
+        ));
     };
-    let Some(active_id) = active_id else {
-        return Ok(AuthState {
+    let profile_id =
+        profile_id_for_auth(connection, &auth_json, &path.with_file_name("config.toml"))?;
+    if let Some(profile_id) = profile_id.as_deref() {
+        connection
+            .execute(
+                "UPDATE accounts SET auth_json = ?1, updated_at = ?2 WHERE id = ?3 AND account_type = 'oauth' AND auth_json <> ?1",
+                params![auth_json, now_millis(), profile_id],
+            )
+            .map_err(database_error)?;
+    }
+    let auth_state = if profile_id.is_some() {
+        AuthState {
+            kind: "managed".to_string(),
+            message: "当前 Codex 登录状态已匹配已保存账户。".to_string(),
+        }
+    } else {
+        AuthState {
             kind: "unmanaged".to_string(),
             message: "当前 Codex 登录状态尚未纳入本应用管理。".to_string(),
-        });
-    };
-    let stored = connection
-        .query_row(
-            "SELECT auth_hash, account_type, api_base_url FROM accounts WHERE id = ?1",
-            params![active_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(database_error)?;
-    match stored {
-        Some((hash, account_type, api_base_url))
-            if hash == auth_hash(&auth_json)
-                && (account_type != ACCOUNT_TYPE_RELAY
-                    || relay_config_matches(
-                        &path.with_file_name("config.toml"),
-                        api_base_url.as_deref(),
-                    )?) =>
-        {
-            Ok(AuthState {
-                kind: "managed".to_string(),
-                message: "当前 Codex 登录状态与活动账户一致。".to_string(),
-            })
         }
-        Some(_) => Ok(AuthState {
-            kind: "external".to_string(),
-            message: "当前 Codex 登录或 API 配置已在本应用之外发生变更。".to_string(),
-        }),
-        None => Ok(AuthState {
-            kind: "unmanaged".to_string(),
-            message: "活动账户已不存在，请重新导入当前登录状态。".to_string(),
-        }),
-    }
+    };
+    Ok((auth_state, profile_id))
 }
 
 pub(super) fn switch_profile_internal(
@@ -554,12 +495,11 @@ pub(super) fn switch_profile_internal(
     force: bool,
 ) -> Result<ProfileSummary, String> {
     let mut connection = open_database(state)?;
-    let active_id = get_setting(&connection, "active_profile_id")?;
     let path = auth_path(state)?;
-    let status = resolve_auth_state(&connection, active_id.as_deref(), &path)?;
+    let (_, active_id) = resolve_auth_state(&connection, &path)?;
     let external_auth_has_credential =
         read_auth_json(&path)?.is_some_and(|auth_json| has_usable_credential(&auth_json));
-    if status.kind == "external" && external_auth_has_credential && !force {
+    if active_id.is_none() && external_auth_has_credential && !force {
         return Err(
             "检测到工具外的 Codex 登录或 API 配置变更。请先导入当前状态，或确认后强制切换。"
                 .to_string(),
@@ -585,12 +525,6 @@ pub(super) fn switch_profile_internal(
     let now = now_millis();
     let database_result = (|| {
         let transaction = connection.transaction().map_err(database_error)?;
-        transaction
-            .execute(
-                "INSERT INTO settings (key, value) VALUES ('active_profile_id', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![row.0],
-            )
-            .map_err(database_error)?;
         transaction
             .execute(
                 "UPDATE accounts SET last_used_at = ?1, updated_at = ?1 WHERE id = ?2",
@@ -645,8 +579,8 @@ pub(super) fn update_profile_internal(
         "" => identity.email.clone(),
         alias => alias.to_string(),
     };
-    let hash = auth_hash(&formatted_auth_json);
-    let active_id = get_setting(&connection, "active_profile_id")?;
+    let auth_path = auth_path(state)?;
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path)?;
     let active = active_id.as_deref() == Some(profile_id);
     let backup = active
         .then(|| apply_profile_files(state, &formatted_auth_json, ACCOUNT_TYPE_OAUTH, None))
@@ -655,8 +589,8 @@ pub(super) fn update_profile_internal(
         let transaction = connection.transaction().map_err(database_error)?;
         let changed = transaction
             .execute(
-                "UPDATE accounts SET account_id = ?1, email = ?2, alias = ?3, plan_type = CASE WHEN ?4 = '' THEN plan_type ELSE ?4 END, auth_json = ?5, auth_hash = ?6, updated_at = ?7 WHERE id = ?8",
-                params![identity.account_id, identity.email, alias, identity.plan_type, formatted_auth_json, hash, now_millis(), profile_id],
+                "UPDATE accounts SET account_id = ?1, email = ?2, alias = ?3, plan_type = CASE WHEN ?4 = '' THEN plan_type ELSE ?4 END, auth_json = ?5, updated_at = ?6 WHERE id = ?7",
+                params![identity.account_id, identity.email, alias, identity.plan_type, formatted_auth_json, now_millis(), profile_id],
             )
             .map_err(database_error)?;
         if changed == 0 {
@@ -670,6 +604,7 @@ pub(super) fn update_profile_internal(
         }
         return Err(error);
     }
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path)?;
     get_profile_summary(&connection, profile_id, active_id.as_deref())
 }
 
@@ -677,7 +612,6 @@ pub(super) fn upsert_profile_from_auth(
     state: &AppState,
     auth_json: &str,
     requested_alias: &str,
-    make_active: bool,
 ) -> Result<ProfileSummary, String> {
     let parsed: Value =
         serde_json::from_str(auth_json).map_err(|_| "auth.json 不是有效的 JSON。".to_string())?;
@@ -686,7 +620,6 @@ pub(super) fn upsert_profile_from_auth(
     }
     let refresh_token = extract_refresh_token(auth_json)?;
     let identity = identity_from_auth_json(&parsed);
-    let hash = auth_hash(auth_json);
     let connection = open_database(state)?;
     let existing = connection
         .query_row(
@@ -705,8 +638,8 @@ pub(super) fn upsert_profile_from_auth(
         };
         connection
             .execute(
-                "UPDATE accounts SET account_type = 'oauth', api_base_url = NULL, account_id = ?1, email = ?2, alias = ?3, plan_type = CASE WHEN ?4 = '' THEN plan_type ELSE ?4 END, auth_json = ?5, auth_hash = ?6, updated_at = ?7 WHERE id = ?8",
-                params![identity.account_id, identity.email, alias, identity.plan_type, auth_json, hash, now, id],
+                "UPDATE accounts SET account_type = 'oauth', api_base_url = NULL, account_id = ?1, email = ?2, alias = ?3, plan_type = CASE WHEN ?4 = '' THEN plan_type ELSE ?4 END, auth_json = ?5, updated_at = ?6 WHERE id = ?7",
+                params![identity.account_id, identity.email, alias, identity.plan_type, auth_json, now, id],
             )
             .map_err(database_error)?;
         id
@@ -723,20 +656,14 @@ pub(super) fn upsert_profile_from_auth(
         };
         connection
             .execute(
-                "INSERT INTO accounts (id, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, auth_hash, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'oauth', NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts), 0))",
-                params![id, identity.account_id, identity.email, alias, identity.plan_type, auth_json, hash, now],
+                "INSERT INTO accounts (id, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'oauth', NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?7, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts), 0))",
+                params![id, identity.account_id, identity.email, alias, identity.plan_type, auth_json, now],
             )
             .map_err(database_error)?;
         id
     };
-    if make_active {
-        set_setting(&connection, "active_profile_id", &id)?;
-    }
-    get_profile_summary(
-        &connection,
-        &id,
-        if make_active { Some(id.as_str()) } else { None },
-    )
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
+    get_profile_summary(&connection, &id, active_id.as_deref())
 }
 
 pub(super) fn upsert_relay_profile(
@@ -747,12 +674,11 @@ pub(super) fn upsert_relay_profile(
 ) -> Result<ProfileSummary, String> {
     let api_base_url = normalize_api_base_url(api_base_url)?;
     let auth_json = build_relay_auth_json(api_key)?;
-    let hash = auth_hash(&auth_json);
     let connection = open_database(state)?;
     let existing = connection
         .query_row(
-            "SELECT id, alias FROM accounts WHERE account_type = 'relay' AND api_base_url = ?1 AND auth_hash = ?2 LIMIT 1",
-            params![api_base_url, hash],
+            "SELECT id, alias FROM accounts WHERE account_type = 'relay' AND api_base_url = ?1 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?2 LIMIT 1",
+            params![api_base_url, api_key.trim()],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
@@ -766,8 +692,8 @@ pub(super) fn upsert_relay_profile(
         };
         connection
             .execute(
-                "UPDATE accounts SET alias = ?1, auth_json = ?2, auth_hash = ?3, api_base_url = ?4, updated_at = ?5 WHERE id = ?6",
-                params![alias, auth_json, hash, api_base_url, now, id],
+                "UPDATE accounts SET alias = ?1, auth_json = ?2, api_base_url = ?3, updated_at = ?4 WHERE id = ?5",
+                params![alias, auth_json, api_base_url, now, id],
             )
             .map_err(database_error)?;
         id
@@ -776,13 +702,13 @@ pub(super) fn upsert_relay_profile(
         let alias = relay_alias(requested_alias, &api_base_url);
         connection
             .execute(
-                "INSERT INTO accounts (id, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, auth_hash, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'relay', ?2, '', '', ?3, '', ?4, ?5, ?6, ?6, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts), 0))",
-                params![id, api_base_url, alias, auth_json, hash, now],
+                "INSERT INTO accounts (id, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'relay', ?2, '', '', ?3, '', ?4, ?5, ?5, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts), 0))",
+                params![id, api_base_url, alias, auth_json, now],
             )
             .map_err(database_error)?;
         id
     };
-    let active_id = get_setting(&connection, "active_profile_id")?;
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
     get_profile_summary(&connection, &id, active_id.as_deref())
 }
 
@@ -814,11 +740,10 @@ pub(super) fn update_relay_profile_internal(
         .or_else(|| extract_api_key(&existing_auth_json).ok().flatten())
         .ok_or_else(|| "中转站账户缺少 API Key。".to_string())?;
     let auth_json = build_relay_auth_json(&api_key)?;
-    let hash = auth_hash(&auth_json);
     let duplicate_exists = connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM accounts WHERE account_type = 'relay' AND id <> ?1 AND api_base_url = ?2 AND auth_hash = ?3)",
-            params![profile_id, api_base_url, hash],
+            "SELECT EXISTS(SELECT 1 FROM accounts WHERE account_type = 'relay' AND id <> ?1 AND api_base_url = ?2 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?3)",
+            params![profile_id, api_base_url, api_key],
             |row| row.get::<_, bool>(0),
         )
         .map_err(database_error)?;
@@ -826,7 +751,8 @@ pub(super) fn update_relay_profile_internal(
         return Err("已存在使用相同 API Key 和地址的中转站账户。".to_string());
     }
     let alias = relay_alias(requested_alias, &api_base_url);
-    let active_id = get_setting(&connection, "active_profile_id")?;
+    let auth_path = auth_path(state)?;
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path)?;
     let active = active_id.as_deref() == Some(profile_id);
     let backup = active
         .then(|| apply_profile_files(state, &auth_json, ACCOUNT_TYPE_RELAY, Some(&api_base_url)))
@@ -835,8 +761,8 @@ pub(super) fn update_relay_profile_internal(
         let transaction = connection.transaction().map_err(database_error)?;
         transaction
             .execute(
-                "UPDATE accounts SET alias = ?1, api_base_url = ?2, auth_json = ?3, auth_hash = ?4, updated_at = ?5 WHERE id = ?6",
-                params![alias, api_base_url, auth_json, hash, now_millis(), profile_id],
+                "UPDATE accounts SET alias = ?1, api_base_url = ?2, auth_json = ?3, updated_at = ?4 WHERE id = ?5",
+                params![alias, api_base_url, auth_json, now_millis(), profile_id],
             )
             .map_err(database_error)?;
         transaction.commit().map_err(database_error)
@@ -847,6 +773,7 @@ pub(super) fn update_relay_profile_internal(
         }
         return Err(error);
     }
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path)?;
     get_profile_summary(&connection, profile_id, active_id.as_deref())
 }
 
@@ -865,8 +792,6 @@ pub(super) struct AccountUsage {
     pub(super) plan_type: String,
     pub(super) primary: Option<UsageWindow>,
     pub(super) secondary: Option<UsageWindow>,
-    pub(super) credits_balance: Option<String>,
-    pub(super) credits_unlimited: bool,
 }
 
 pub(super) fn refresh_profile_usage_internal(
@@ -900,7 +825,7 @@ pub(super) fn refresh_profile_usage_internal(
     let now = now_millis();
     connection
         .execute(
-            "UPDATE accounts SET plan_type = CASE WHEN ?1 = '' THEN plan_type ELSE ?1 END, usage_primary_percent = ?2, usage_primary_window_minutes = ?3, usage_primary_resets_at = ?4, usage_secondary_percent = ?5, usage_secondary_window_minutes = ?6, usage_secondary_resets_at = ?7, credits_balance = ?8, credits_unlimited = ?9, usage_updated_at = ?10, reset_credits_available_count = ?11 WHERE id = ?12",
+            "UPDATE accounts SET plan_type = CASE WHEN ?1 = '' THEN plan_type ELSE ?1 END, usage_primary_percent = ?2, usage_primary_window_minutes = ?3, usage_primary_resets_at = ?4, usage_secondary_percent = ?5, usage_secondary_window_minutes = ?6, usage_secondary_resets_at = ?7, usage_updated_at = ?8, reset_credits_available_count = ?9 WHERE id = ?10",
             params![
                 usage.plan_type,
                 usage.primary.as_ref().map(|window| window.used_percent),
@@ -909,15 +834,13 @@ pub(super) fn refresh_profile_usage_internal(
                 usage.secondary.as_ref().map(|window| window.used_percent),
                 usage.secondary.as_ref().and_then(|window| window.window_minutes),
                 usage.secondary.as_ref().and_then(|window| window.resets_at),
-                usage.credits_balance,
-                usage.credits_unlimited,
                 now,
                 reset_credits.as_ref().map(|credits| credits.available_count),
                 profile_id,
             ],
         )
         .map_err(database_error)?;
-    let active_id = get_setting(&connection, "active_profile_id")?;
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
     get_profile_summary(&connection, profile_id, active_id.as_deref())
 }
 
@@ -1085,16 +1008,6 @@ pub(super) fn parse_account_usage(body: &str) -> Result<AccountUsage, String> {
             .to_string(),
         primary,
         secondary,
-        credits_balance: credits
-            .and_then(|credits| credits.get("balance"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|balance| !balance.is_empty())
-            .map(str::to_string),
-        credits_unlimited: credits
-            .and_then(|credits| credits.get("unlimited"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
     })
 }
 
@@ -1132,18 +1045,10 @@ mod tests {
             pending_oauth: Arc::new(Mutex::new(None)),
         };
         initialize_database(&state).unwrap();
-        upsert_profile_from_auth(
-            &state,
-            r#"{"tokens":{"refresh_token":"current-rt"}}"#,
-            "current",
-            true,
-        )
-        .unwrap();
         let target = upsert_profile_from_auth(
             &state,
             r#"{"tokens":{"refresh_token":"target-rt"}}"#,
             "target",
-            false,
         )
         .unwrap();
         write_auth_json_atomically(
@@ -1159,10 +1064,12 @@ mod tests {
 
         switch_profile_internal(&state, &target.id, false).unwrap();
 
-        assert_eq!(
-            get_setting(&open_database(&state).unwrap(), "active_profile_id").unwrap(),
-            Some(target.id)
-        );
+        let connection = open_database(&state).unwrap();
+        let (status, active_id) =
+            resolve_auth_state(&connection, &directory.join("auth.json")).unwrap();
+        assert_eq!(status.kind, "managed");
+        assert_eq!(active_id.as_deref(), Some(target.id.as_str()));
+        assert_eq!(get_setting(&connection, "active_profile_id").unwrap(), None);
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
@@ -1186,9 +1093,9 @@ mod tests {
             .to_string()
         };
 
-        let first = upsert_profile_from_auth(&state, &auth("rt-1"), "first", false).unwrap();
-        let second = upsert_profile_from_auth(&state, &auth("rt-2"), "second", false).unwrap();
-        let updated = upsert_profile_from_auth(&state, &auth("rt-1"), "updated", false).unwrap();
+        let first = upsert_profile_from_auth(&state, &auth("rt-1"), "first").unwrap();
+        let second = upsert_profile_from_auth(&state, &auth("rt-2"), "second").unwrap();
+        let updated = upsert_profile_from_auth(&state, &auth("rt-1"), "updated").unwrap();
 
         assert_ne!(first.id, second.id);
         assert_eq!(first.id, updated.id);
@@ -1201,7 +1108,45 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
-    fn parses_codex_usage_windows_and_credits() {
+    fn matches_current_oauth_by_refresh_token() {
+        let directory =
+            std::env::temp_dir().join(format!("cortana-auth-match-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let state = AppState {
+            database_path: directory.join("app.sqlite3"),
+            default_codex_home: directory.clone(),
+            pending_oauth: Arc::new(Mutex::new(None)),
+        };
+        initialize_database(&state).unwrap();
+        let profile = upsert_profile_from_auth(
+            &state,
+            r#"{"tokens":{"refresh_token":"same-rt","access_token":"old"}}"#,
+            "OAuth",
+        )
+        .unwrap();
+        write_auth_json_atomically(
+            &directory.join("auth.json"),
+            r#"{"tokens":{"refresh_token":"same-rt","access_token":"new"}}"#,
+        )
+        .unwrap();
+
+        let (status, active_id) = resolve_auth_state(
+            &open_database(&state).unwrap(),
+            &directory.join("auth.json"),
+        )
+        .unwrap();
+
+        assert_eq!(status.kind, "managed");
+        assert_eq!(active_id.as_deref(), Some(profile.id.as_str()));
+        assert!(
+            get_profile_auth_json(&open_database(&state).unwrap(), &profile.id)
+                .unwrap()
+                .contains("new")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+    #[test]
+    fn parses_codex_usage_windows() {
         let usage = parse_account_usage(
                 r#"{
                   "plan_type":"plus",
@@ -1218,8 +1163,6 @@ mod tests {
         assert_eq!(usage.plan_type, "plus");
         assert_eq!(usage.primary.unwrap().window_minutes, Some(300));
         assert_eq!(usage.secondary.unwrap().used_percent, 5.0);
-        assert_eq!(usage.credits_balance.as_deref(), Some("9.99"));
-        assert!(!usage.credits_unlimited);
     }
     #[test]
     fn parses_reset_credit_details() {
@@ -1244,13 +1187,10 @@ mod tests {
             pending_oauth: Arc::new(Mutex::new(None)),
         };
         initialize_database(&state).unwrap();
-        let profile = upsert_profile_from_auth(
-            &state,
-            r#"{"tokens":{"refresh_token":"old"}}"#,
-            "旧名称",
-            true,
-        )
-        .unwrap();
+        let profile =
+            upsert_profile_from_auth(&state, r#"{"tokens":{"refresh_token":"old"}}"#, "旧名称")
+                .unwrap();
+        switch_profile_internal(&state, &profile.id, true).unwrap();
         let updated_auth = r#"{ "tokens": { "refresh_token": "new" } }"#;
         let formatted_auth = r#"{
   "tokens": {
@@ -1271,8 +1211,9 @@ mod tests {
             formatted_auth
         );
         assert_eq!(
-            resolve_auth_state(&connection, Some(&profile.id), &directory.join("auth.json"))
+            resolve_auth_state(&connection, &directory.join("auth.json"))
                 .unwrap()
+                .0
                 .kind,
             "managed"
         );
@@ -1322,13 +1263,21 @@ mod tests {
         assert!(config.contains("model_provider = \"relay\""));
         assert!(config.contains("[model_providers.relay]"));
         assert!(config.contains("base_url = \"https://relay.example.com/v1\""));
+        write_file_atomically(
+            &directory.join("config.toml"),
+            &config.replace(
+                "base_url = \"https://relay.example.com/v1\"",
+                "base_url = \"https://relay.example.com/v1/\"",
+            ),
+        )
+        .unwrap();
         assert_eq!(
             resolve_auth_state(
                 &open_database(&state).unwrap(),
-                Some(&relay.id),
                 &directory.join("auth.json"),
             )
             .unwrap()
+            .0
             .kind,
             "managed"
         );
@@ -1337,7 +1286,6 @@ mod tests {
             &state,
             r#"{"tokens":{"refresh_token":"oauth-rt"}}"#,
             "OAuth",
-            false,
         )
         .unwrap();
         switch_profile_internal(&state, &oauth.id, true).unwrap();

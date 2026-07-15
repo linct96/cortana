@@ -86,7 +86,7 @@ function PromptsContent() {
       await load();
     } catch (error) {
       const message = appError(error);
-      if (!force && message.includes('工具外')) setForceProfile(profile);
+      if (!force && message.includes('未纳管')) setForceProfile(profile);
       else toast.error(message);
     } finally {
       setBusy(null);
@@ -114,9 +114,7 @@ function PromptsContent() {
         <div className="shrink-0 px-4 pb-5 sm:px-8 lg:px-12">
           <Alert className="pr-40">
             <TriangleAlert />
-            <AlertTitle>
-              {status.fileState === 'external' ? 'AGENTS.md 已在工具外修改' : 'AGENTS.md 尚未纳管'}
-            </AlertTitle>
+            <AlertTitle>AGENTS.md 尚未纳管</AlertTitle>
             <AlertDescription className="truncate" title={status.path}>
               {status.path}
             </AlertDescription>
@@ -185,7 +183,7 @@ function PromptsContent() {
       />
       <ConfirmDialog
         open={Boolean(forceProfile)}
-        title="覆盖工具外修改"
+        title="覆盖未纳管文件"
         description="继续启用会用所选方案覆盖当前 AGENTS.md。"
         confirmLabel="强制覆盖"
         busy={Boolean(busy)}

@@ -121,7 +121,7 @@ export function AppLayout() {
                 disabled={codexCliAvailable === false}
               />
               <NavItem to="/prompts" label="提示词管理" icon={FileText} />
-              <NavItem to="/config" label="Codex 配置" icon={FileCog} />
+              <NavItem to="/config" label="配置" icon={FileCog} />
             </nav>
             <nav className="border-t border-border pt-2" aria-label="应用导航">
               <NavItem to="/settings" label="设置" icon={Settings} />
