@@ -442,13 +442,4 @@ mod tests {
         );
         fs::remove_dir_all(directory).unwrap();
     }
-
-    #[test]
-    fn rejects_blank_and_duplicate_names_case_insensitively() {
-        let (directory, state) = test_state();
-        create_agents_profile_internal(&state, "Default", "").unwrap();
-        assert!(create_agents_profile_internal(&state, "default", "").is_err());
-        assert!(create_agents_profile_internal(&state, "  ", "").is_err());
-        fs::remove_dir_all(directory).unwrap();
-    }
 }

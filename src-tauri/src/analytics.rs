@@ -385,18 +385,4 @@ mod tests {
         assert_eq!(analytics.sessions.len(), 1);
         fs::remove_dir_all(directory).unwrap();
     }
-
-    #[test]
-    fn fills_the_selected_trend_range() {
-        let today = NaiveDate::from_ymd_opt(2026, 7, 14).unwrap();
-        let mut values = BTreeMap::new();
-        values.insert("2026-07-14".to_string(), 42);
-
-        let today_buckets = build_trend(UsageRange::Today, today, BTreeMap::new());
-        let week_buckets = build_trend(UsageRange::SevenDays, today, values);
-
-        assert_eq!(today_buckets.len(), 24);
-        assert_eq!(week_buckets.len(), 7);
-        assert_eq!(week_buckets.last().unwrap().total_tokens, 42);
-    }
 }

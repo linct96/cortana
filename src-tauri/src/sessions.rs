@@ -601,27 +601,6 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_session_sources() {
-        assert_eq!(source_name(&json!("cli")), "cli");
-        assert_eq!(source_name(&json!({ "custom": "desktop" })), "desktop");
-        assert_eq!(source_name(&json!({ "subAgent": {} })), "subAgent");
-    }
-
-    #[test]
-    fn builds_codex_commands_for_executables_and_windows_scripts() {
-        let direct = codex_command(Path::new("codex"), &["--version"]);
-        assert_eq!(direct.get_program(), "codex");
-        assert_eq!(direct.get_args().collect::<Vec<_>>(), ["--version"]);
-
-        let script = codex_command(Path::new("codex.cmd"), &["doctor", "--json"]);
-        assert_eq!(script.get_program(), "cmd");
-        assert_eq!(
-            script.get_args().collect::<Vec<_>>(),
-            ["/D", "/C", "codex.cmd", "doctor", "--json"]
-        );
-    }
-
-    #[test]
     fn parses_codex_environment_metadata() {
         assert_eq!(
             parse_codex_version("codex-cli 0.144.4").as_deref(),

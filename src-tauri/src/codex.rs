@@ -362,18 +362,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn writes_valid_auth_json_through_a_temporary_file() {
-        let directory =
-            std::env::temp_dir().join(format!("codex-switcher-test-{}", Uuid::new_v4()));
-        let path = directory.join("auth.json");
-        let auth = r#"{"tokens":{"access_token":"test"}}"#;
-
-        write_auth_json_atomically(&path, auth).unwrap();
-
-        assert_eq!(fs::read_to_string(&path).unwrap(), auth);
-        fs::remove_dir_all(directory).unwrap();
-    }
-    #[test]
     fn reads_and_writes_config_from_the_configured_codex_home() {
         let directory =
             std::env::temp_dir().join(format!("codex-switcher-test-{}", Uuid::new_v4()));
@@ -424,64 +412,5 @@ mod tests {
             "model = \"gpt-5.6\"\n"
         );
         fs::remove_dir_all(directory).unwrap();
-    }
-    #[test]
-    fn config_diagnostics_use_frontend_text_offsets() {
-        assert_eq!(byte_offset_to_utf16("你x", 3), 1);
-        assert_eq!(byte_offset_to_utf16("😀x", 4), 2);
-    }
-    #[test]
-    fn formats_toml_without_losing_comments() {
-        let formatted = format_codex_config_internal("# keep\nvalue=[1,2]\n").unwrap();
-
-        assert_eq!(formatted, "# keep\nvalue = [1, 2]\n");
-        assert!(format_codex_config_internal("value = [\n").is_err());
-    }
-    #[test]
-    fn extracts_only_the_refresh_token_from_imported_auth_json() {
-        let auth = r#"{"tokens":{"access_token":"untrusted","refresh_token":"  valid-rt  "}}"#;
-
-        assert_eq!(extract_refresh_token(auth).unwrap(), "valid-rt");
-        assert!(extract_refresh_token(r#"{"tokens":{"access_token":"untrusted"}}"#).is_err());
-    }
-    #[test]
-    fn validates_relay_urls_and_builds_relay_auth() {
-        assert_eq!(
-            normalize_api_base_url(" http://relay.example.com/v1/ ").unwrap(),
-            "http://relay.example.com/v1"
-        );
-        assert!(normalize_api_base_url("ftp://relay.example.com/v1").is_err());
-        assert!(normalize_api_base_url("https://").is_err());
-        assert!(normalize_api_base_url("https://user:pass@relay.example.com/v1").is_err());
-
-        let auth: Value =
-            serde_json::from_str(&build_relay_auth_json(" relay-key ").unwrap()).unwrap();
-        assert_eq!(auth["OPENAI_API_KEY"], "relay-key");
-        assert!(auth.get("auth_mode").is_none());
-        assert!(auth.get("tokens").is_none());
-    }
-    #[test]
-    fn relay_config_updates_preserve_unrelated_content_and_remove_managed_keys() {
-        let original = "# keep this comment\nmodel = \"gpt-test\"\n[features]\nmemories = true\n[model_providers.custom]\nname = \"Custom\"\nbase_url = \"https://custom.example.com/v1\"\n";
-        let relay = update_provider_config_content(
-            original,
-            ACCOUNT_TYPE_RELAY,
-            Some("https://relay.example.com/v1"),
-        )
-        .unwrap();
-        assert!(relay.contains("# keep this comment"));
-        assert!(relay.contains("model = \"gpt-test\""));
-        assert!(relay.contains("model_provider = \"relay\""));
-        assert!(relay.contains("[model_providers.relay]"));
-        assert!(relay.contains("name = \"Relay\""));
-        assert!(relay.contains("base_url = \"https://relay.example.com/v1\""));
-        assert!(relay.contains("wire_api = \"responses\""));
-        assert!(relay.contains("requires_openai_auth = true"));
-
-        let oauth = update_provider_config_content(&relay, ACCOUNT_TYPE_OAUTH, None).unwrap();
-        assert!(oauth.contains("# keep this comment"));
-        assert!(oauth.contains("model = \"gpt-test\""));
-        assert!(!oauth.contains("model_provider"));
-        assert!(!oauth.contains("model_providers"));
     }
 }

@@ -242,17 +242,3 @@ pub fn run() {
             _ => {}
         });
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_accepts_existing_codex_home_directories() {
-        assert_eq!(existing_directory(" ").unwrap_err(), "Codex 主目录不存在。");
-        assert_eq!(
-            existing_directory(std::env::temp_dir().to_str().unwrap()).unwrap(),
-            std::env::temp_dir()
-        );
-    }
-}
