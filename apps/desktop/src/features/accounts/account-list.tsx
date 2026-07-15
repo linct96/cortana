@@ -6,7 +6,7 @@ import {
   LoaderCircle,
   Pencil,
   RefreshCw,
-  RotateCcw,
+  Tickets,
   Trash2,
 } from 'lucide-react';
 import { Fragment } from 'react';
@@ -119,7 +119,7 @@ export function AccountRow({
                   </DropdownMenuItem>
                   {profile.planType.trim() && profile.planType.trim().toLowerCase() !== 'free' ? (
                     <DropdownMenuItem onClick={onViewResetCredits}>
-                      <RotateCcw /> 查看重置
+                      <Tickets /> 重置卡
                     </DropdownMenuItem>
                   ) : null}
                 </>
@@ -152,11 +152,6 @@ export function AccountBalance({
       <div className="mb-3 flex items-center gap-2">
         <strong className="text-sm font-medium">剩余额度</strong>
         {profile.planType && <Badge variant="outline">{planLabel(profile.planType)}</Badge>}
-        {profile.creditsUnlimited ? (
-          <span className="text-xs text-muted-foreground">积分不限量</span>
-        ) : profile.creditsBalance ? (
-          <span className="text-xs text-muted-foreground">积分 {profile.creditsBalance}</span>
-        ) : null}
         <Tooltip>
           <TooltipTrigger render={<span className="ml-auto inline-flex" />}>
             <Button
@@ -224,10 +219,6 @@ function AccountMeta({ profile }: { profile: Profile }) {
         key: 'reset-credits',
         label: `${profile.resetCreditsAvailableCount}次可用重置`,
       });
-    }
-    if (profile.creditsUnlimited) items.push({ key: 'credits', label: '积分不限量' });
-    else if (profile.creditsBalance) {
-      items.push({ key: 'credits', label: `积分 ${profile.creditsBalance}` });
     }
     if (!profile.usageUpdatedAt) items.push({ key: 'empty', label: '额度未查询' });
   }

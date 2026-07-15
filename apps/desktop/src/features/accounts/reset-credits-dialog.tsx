@@ -1,7 +1,8 @@
-import { LoaderCircle } from 'lucide-react';
+import { LoaderCircle, Tickets } from 'lucide-react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '../../components/ui/empty';
 import type { Profile, ResetCredit, ResetCredits } from './types';
 
 export function ResetCreditsDialog({
@@ -19,7 +20,7 @@ export function ResetCreditsDialog({
         <DialogHeader>
           <DialogTitle>{profile.alias} 的重置卡</DialogTitle>
         </DialogHeader>
-        {credits && (
+        {credits && credits.availableCount > 0 && (
           <div className="flex justify-end">
             <Badge className="h-6 bg-success/10 px-2.5 text-sm text-success">
               可用{credits.availableCount}次
@@ -40,7 +41,14 @@ export function ResetCreditsDialog({
                 ))}
               </div>
             ) : (
-              <span className="text-sm text-muted-foreground">暂无重置卡</span>
+              <Empty className="min-h-32 p-4">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <Tickets />
+                  </EmptyMedia>
+                  <EmptyTitle>暂无重置卡</EmptyTitle>
+                </EmptyHeader>
+              </Empty>
             )}
           </div>
         )}
