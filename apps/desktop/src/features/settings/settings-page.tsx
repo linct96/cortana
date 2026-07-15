@@ -1,9 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
-import { Check, FolderOpen, LoaderCircle } from 'lucide-react';
-import { type FormEvent, useEffect, useState } from 'react';
+import { Check, FolderOpen, LoaderCircle, RefreshCw } from 'lucide-react';
+import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { PageHeader, PageShell } from '../../components/page-shell';
+import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
   InputGroup,
   InputGroupAddon,
@@ -13,6 +15,7 @@ import {
 import { Switch } from '../../components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { appError, authFileParent } from '../../utils';
+import { type CliEnvironment, isCliUpgradeAvailable } from './cli-environment';
 
 type AppStatus = {
   authPath: string;
@@ -170,12 +173,157 @@ function SettingsContent() {
 export function AboutPage() {
   return (
     <PageShell>
-      <PageHeader title="关于" />
       <AboutContent />
     </PageShell>
   );
 }
 
 function AboutContent() {
-  return null;
+  const [environments, setEnvironments] = useState<{
+    codex: CliEnvironment;
+    claude: CliEnvironment;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const requestId = useRef(0);
+
+  const loadEnvironment = useCallback(async () => {
+    const currentRequest = ++requestId.current;
+    setLoading(true);
+    try {
+      const [codex, claude] = await Promise.all([
+        invoke<CliEnvironment>('get_codex_cli_environment'),
+        invoke<CliEnvironment>('get_claude_cli_environment'),
+      ]);
+      if (currentRequest === requestId.current) setEnvironments({ codex, claude });
+    } catch (error) {
+      if (currentRequest === requestId.current) toast.error(appError(error));
+    } finally {
+      if (currentRequest === requestId.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadEnvironment();
+    return () => {
+      requestId.current += 1;
+    };
+  }, [loadEnvironment]);
+
+  return (
+    <>
+      <PageHeader
+        title="关于"
+        actions={
+          <Button
+            variant="ghost"
+            size="icon"
+            type="button"
+            onClick={() => void loadEnvironment()}
+            disabled={loading}
+          >
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+            <span className="sr-only">刷新本地环境</span>
+          </Button>
+        }
+      />
+      <div className="w-full px-4 pt-6 pb-10 sm:px-8 lg:px-12">
+        <section className="grid gap-3 lg:grid-cols-2">
+          <CliEnvironmentCard
+            title="Codex CLI"
+            environment={environments?.codex}
+            loading={loading}
+          />
+          <CliEnvironmentCard
+            title="Claude CLI"
+            environment={environments?.claude}
+            loading={loading}
+          />
+        </section>
+      </div>
+    </>
+  );
+}
+
+function CliEnvironmentCard({
+  title,
+  environment,
+  loading,
+}: {
+  title: string;
+  environment?: CliEnvironment;
+  loading: boolean;
+}) {
+  const upgradeAvailable = isCliUpgradeAvailable(environment);
+  const status =
+    loading && !environment
+      ? '检测中'
+      : !environment
+        ? '检测失败'
+        : upgradeAvailable
+          ? '可升级'
+          : environment.installed
+            ? '已安装'
+            : '未安装';
+
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        <CardAction>
+          <Badge
+            variant={
+              upgradeAvailable ? 'warning' : environment?.installed ? 'default' : 'secondary'
+            }
+          >
+            {status}
+          </Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid gap-2">
+          <EnvironmentRow label="当前版本" mono>
+            {loading && !environment
+              ? '检测中...'
+              : environment?.installed
+                ? (environment.installedVersion ?? '未知')
+                : '未安装'}
+          </EnvironmentRow>
+          <EnvironmentRow label="最新版本" mono>
+            {loading && !environment ? '检测中...' : (environment?.latestVersion ?? '获取失败')}
+          </EnvironmentRow>
+          <EnvironmentRow label="安装方式">
+            {environment?.installed ? installMethodLabel(environment.installMethod) : '未知'}
+          </EnvironmentRow>
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+function EnvironmentRow({
+  label,
+  mono,
+  children,
+}: {
+  label: string;
+  mono?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid min-h-6 grid-cols-[6rem_minmax(0,1fr)] items-center gap-3">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className={mono ? 'font-mono text-xs' : undefined}>{children}</dd>
+    </div>
+  );
+}
+
+function installMethodLabel(method: CliEnvironment['installMethod']) {
+  return {
+    brew: 'Homebrew',
+    npm: 'npm',
+    pnpm: 'pnpm',
+    bun: 'Bun',
+    standalone: '官方安装器',
+    unknown: '未知',
+  }[method];
 }

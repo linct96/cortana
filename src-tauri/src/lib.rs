@@ -83,6 +83,13 @@ fn open_codex_home(app: tauri::AppHandle, codex_home: String) -> Result<bool, St
     Ok(false)
 }
 
+#[tauri::command]
+fn open_codex_cli_install_page(app: tauri::AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url("https://learn.chatgpt.com/docs/codex/cli", None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
 fn existing_directory(value: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(value.trim());
     if path.is_dir() {
@@ -202,6 +209,9 @@ pub fn run() {
             codex::validate_codex_config,
             codex::format_codex_config,
             codex::save_codex_config,
+            sessions::is_codex_cli_available,
+            sessions::get_codex_cli_environment,
+            sessions::get_claude_cli_environment,
             sessions::list_codex_sessions,
             sessions::rename_codex_session,
             sessions::archive_codex_session,
@@ -210,6 +220,7 @@ pub fn run() {
             set_autostart,
             reveal_data_directory,
             open_codex_home,
+            open_codex_cli_install_page,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {

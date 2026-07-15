@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
 import {
   ArrowLeft,
@@ -5,18 +6,31 @@ import {
   Check,
   ChevronDown,
   CreditCard,
+  ExternalLink,
   FileCog,
   Info,
   FileText,
   MessagesSquare,
+  RefreshCw,
   Settings,
   SlidersHorizontal,
+  TriangleAlert,
   UsersRound,
 } from 'lucide-react';
-import { type ComponentType, type ReactNode, useEffect, useRef } from 'react';
+import {
+  type ComponentType,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import { toast } from 'sonner';
 import chatGptIcon from '../assets/chatgpt.svg';
 import claudeIcon from '../assets/claude.svg';
-import { cn } from '../utils';
+import { appError, cn } from '../utils';
+import { Alert, AlertDescription } from './ui/alert';
+import { Button } from './ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +45,7 @@ export function AppLayout() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const isSettings = pathname === '/settings' || pathname.startsWith('/settings/');
   const previousAppPath = useRef<MainPath>('/');
+  const [codexCliAvailable, setCodexCliAvailable] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!isSettings)
@@ -99,7 +114,12 @@ export function AppLayout() {
             <nav className="mt-3 flex flex-1 flex-col gap-1" aria-label="主导航">
               <NavItem to="/" label="账号" icon={UsersRound} exact />
               <NavItem to="/analytics" label="统计分析" icon={ChartNoAxesCombined} />
-              <NavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
+              <NavItem
+                to="/sessions"
+                label="会话管理"
+                icon={MessagesSquare}
+                disabled={codexCliAvailable === false}
+              />
               <NavItem to="/prompts" label="提示词管理" icon={FileText} />
               <NavItem to="/config" label="Codex 配置" icon={FileCog} />
             </nav>
@@ -110,11 +130,81 @@ export function AppLayout() {
         )}
       </aside>
       <div className={cn('flex min-w-0 flex-1 flex-col', isWindows ? 'pt-8' : 'pt-10')}>
+        <CodexCliAlert available={codexCliAvailable} onAvailableChange={setCodexCliAvailable} />
         <div className="min-h-0 flex-1">
           <Outlet />
         </div>
       </div>
     </div>
+  );
+}
+
+function CodexCliAlert({
+  available,
+  onAvailableChange,
+}: {
+  available: boolean | null;
+  onAvailableChange: (available: boolean) => void;
+}) {
+  const [checking, setChecking] = useState(false);
+
+  const check = useCallback(
+    async (minimumDuration = 0) => {
+      setChecking(true);
+      try {
+        const [isAvailable] = await Promise.all([
+          invoke<boolean>('is_codex_cli_available'),
+          new Promise((resolve) => setTimeout(resolve, minimumDuration)),
+        ]);
+        onAvailableChange(isAvailable);
+      } catch (error) {
+        toast.error(appError(error));
+      } finally {
+        setChecking(false);
+      }
+    },
+    [onAvailableChange],
+  );
+
+  useEffect(() => {
+    void check();
+  }, [check]);
+
+  async function openInstallPage() {
+    try {
+      await invoke('open_codex_cli_install_page');
+    } catch (error) {
+      toast.error(appError(error));
+    }
+  }
+
+  if (available !== false) return null;
+
+  return (
+    <Alert variant="warning" className="mb-4 rounded-none border-0 px-4 sm:px-8 lg:px-12">
+      <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <TriangleAlert className="size-4 shrink-0" />
+          <span>未检测到 Codex CLI，部分功能将不可用。</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-warning-foreground hover:bg-warning/15 focus-visible:border-warning/40 focus-visible:ring-warning/20"
+            onClick={() => void check(400)}
+            disabled={checking}
+          >
+            <RefreshCw data-icon="inline-start" className={cn(checking && 'animate-spin')} />
+            {checking ? '检测中...' : '重新检测'}
+          </Button>
+          <Button variant="link" size="sm" onClick={() => void openInstallPage()}>
+            <ExternalLink data-icon="inline-start" />
+            安装 Codex CLI
+          </Button>
+        </span>
+      </AlertDescription>
+    </Alert>
   );
 }
 
@@ -127,12 +217,32 @@ function NavItem({
   label,
   icon: Icon,
   exact = false,
+  disabled = false,
 }: {
   to: AppPath;
   label: string;
   icon: ComponentType<{ className?: string }>;
   exact?: boolean;
+  disabled?: boolean;
 }) {
+  const content = (
+    <>
+      <Icon className="size-4 shrink-0" />
+      <span className="truncate">{label}</span>
+    </>
+  );
+
+  if (disabled) {
+    return (
+      <span
+        aria-disabled="true"
+        className="flex h-9 cursor-not-allowed items-center gap-3 rounded-md px-3 text-sm text-muted-foreground opacity-50"
+      >
+        {content}
+      </span>
+    );
+  }
+
   return (
     <Link
       to={to}
@@ -140,8 +250,7 @@ function NavItem({
       className="flex h-9 items-center gap-3 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
       activeProps={{ className: 'bg-accent font-medium text-accent-foreground' }}
     >
-      <Icon className="size-4 shrink-0" />
-      <span className="truncate">{label}</span>
+      {content}
     </Link>
   );
 }
