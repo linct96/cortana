@@ -45,6 +45,20 @@ export function useAccountManager() {
     }
   }, []);
 
+  const refreshNewAccount = useCallback(
+    async (profile: Profile) => {
+      try {
+        if (profile.accountType === 'oauth') {
+          await invoke<Profile>('refresh_profile_usage', { profileId: profile.id });
+        }
+      } catch (error) {
+        toast.error(`账号已添加，但信息刷新失败：${appError(error)}`);
+      }
+      await refresh();
+    },
+    [refresh],
+  );
+
   useEffect(() => void refresh(), [refresh]);
 
   useEffect(() => {
@@ -54,14 +68,14 @@ export function useAccountManager() {
         setBusy(null);
         closeAddDialog();
         toast.success(payload.message);
-        void refresh();
+        void (payload.profile ? refreshNewAccount(payload.profile) : refresh());
       } else if (payload.stage === 'error') {
         setBusy(null);
         toast.error(payload.message);
       }
     });
     return () => void unlisten.then((cleanup) => cleanup());
-  }, [refresh]);
+  }, [refresh, refreshNewAccount]);
 
   const activeProfile =
     status?.detectedProfile ?? status?.profiles.find((profile) => profile.isActive) ?? null;
@@ -218,7 +232,7 @@ export function useAccountManager() {
             });
       closeAddDialog();
       toast.success(`已添加 ${profile.alias}。`);
-      await refresh();
+      await refreshNewAccount(profile);
     } catch (error) {
       toast.error(appError(error));
     } finally {
