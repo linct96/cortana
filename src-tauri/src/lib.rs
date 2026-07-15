@@ -34,6 +34,7 @@ mod analytics;
 mod billing;
 mod codex;
 mod db;
+mod env;
 mod oauth;
 mod sessions;
 mod state;
@@ -209,9 +210,9 @@ pub fn run() {
             codex::validate_codex_config,
             codex::format_codex_config,
             codex::save_codex_config,
-            sessions::is_codex_cli_available,
-            sessions::get_codex_cli_environment,
-            sessions::get_claude_cli_environment,
+            env::is_codex_cli_available,
+            env::get_codex_cli_environment,
+            env::get_claude_cli_environment,
             sessions::list_codex_sessions,
             sessions::rename_codex_session,
             sessions::archive_codex_session,
