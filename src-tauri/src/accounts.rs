@@ -1071,6 +1071,7 @@ mod tests {
         assert_eq!(status.kind, "managed");
         assert_eq!(active_id.as_deref(), Some(target.id.as_str()));
         assert_eq!(get_setting(&connection, "active_profile_id").unwrap(), None);
+        drop(connection);
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
