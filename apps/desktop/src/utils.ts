@@ -13,10 +13,6 @@ export function appError(error: unknown) {
       : '操作没有完成。';
 }
 
-export function authFileParent(path: string) {
-  return path.replace(/[\\/]auth\.json$/, '');
-}
-
 export function formatResetTime(value: number) {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('zh-CN', {

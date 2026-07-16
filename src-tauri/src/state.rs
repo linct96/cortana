@@ -87,6 +87,16 @@ pub(super) struct AppStatus {
     pub(super) auth_path: String,
     pub(super) auth_state: AuthState,
     pub(super) autostart_enabled: bool,
+    pub(super) web_access: WebAccessStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct WebAccessStatus {
+    pub(super) enabled: bool,
+    pub(super) port: u16,
+    pub(super) available: bool,
+    pub(super) error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,6 +126,14 @@ pub(super) struct OAuthProgress {
     pub(super) stage: String,
     pub(super) message: String,
     pub(super) profile: Option<ProfileSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OAuthProgressSnapshot {
+    pub(super) sequence: u64,
+    pub(super) pending: bool,
+    pub(super) progress: Option<OAuthProgress>,
 }
 
 #[derive(Debug, Deserialize)]

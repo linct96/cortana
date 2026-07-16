@@ -12,6 +12,10 @@ pub(super) fn install_tray(app: &tauri::AppHandle) -> Result<(), String> {
             let id = event.id().as_ref();
             if id == "show" {
                 show_main_window(app);
+            } else if id == "open-web" {
+                if let Some(url) = local_web::browser_url(app) {
+                    let _ = app.opener().open_url(url, None::<&str>);
+                }
             } else if id == "quit" {
                 app.exit(0);
             } else if let Some(profile_id) = id.strip_prefix("switch:") {
@@ -84,9 +88,20 @@ pub(super) fn build_tray_menu(app: &tauri::AppHandle) -> Result<Menu<tauri::Wry>
         .map_err(|error| error.to_string())?;
     let show = MenuItem::with_id(app, "show", "打开账户管理", true, None::<&str>)
         .map_err(|error| error.to_string())?;
+    let web_status = local_web::web_access_status(app, &state)?;
+    let (web_label, web_enabled) = if !web_status.enabled {
+        ("浏览器访问未启用", false)
+    } else if web_status.available {
+        ("在浏览器中打开", true)
+    } else {
+        ("浏览器访问不可用", false)
+    };
+    let open_web = MenuItem::with_id(app, "open-web", web_label, web_enabled, None::<&str>)
+        .map_err(|error| error.to_string())?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)
         .map_err(|error| error.to_string())?;
     menu.append(&show).map_err(|error| error.to_string())?;
+    menu.append(&open_web).map_err(|error| error.to_string())?;
     menu.append(&quit).map_err(|error| error.to_string())?;
     Ok(menu)
 }

@@ -81,7 +81,9 @@ pub(super) fn start_oauth_add(
     );
     if let Err(error) = app.opener().open_url(auth_url, None::<&str>) {
         clear_pending_oauth(&state);
-        return Err(format!("无法打开默认浏览器：{error}"));
+        let message = format!("无法打开默认浏览器：{error}");
+        emit_progress(&app, "error", &message, None);
+        return Err(message);
     }
 
     let state_for_thread = state.inner().clone();
@@ -90,8 +92,12 @@ pub(super) fn start_oauth_add(
 }
 
 #[tauri::command]
-pub(super) fn cancel_oauth_add(state: State<'_, AppState>) -> Result<(), String> {
+pub(super) fn cancel_oauth_add(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     clear_pending_oauth(&state);
+    emit_progress(&app, "cancelled", "授权已取消。", None);
     Ok(())
 }
 
@@ -471,14 +477,17 @@ pub(super) fn emit_progress(
     message: &str,
     profile: Option<ProfileSummary>,
 ) {
-    let _ = app.emit(
-        "oauth-progress",
-        OAuthProgress {
-            stage: stage.to_string(),
-            message: message.to_string(),
-            profile,
-        },
+    let progress = OAuthProgress {
+        stage: stage.to_string(),
+        message: message.to_string(),
+        profile,
+    };
+    local_web::record_oauth_progress(
+        app,
+        progress.clone(),
+        matches!(stage, "browser_opening" | "waiting" | "exchanging"),
     );
+    let _ = app.emit("oauth-progress", progress);
 }
 
 pub(super) fn write_browser_response(

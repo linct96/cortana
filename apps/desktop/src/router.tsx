@@ -4,10 +4,12 @@ import {
   createRoute,
   createRouter,
   lazyRouteComponent,
+  redirect,
 } from '@tanstack/react-router';
-import { AppLayout } from './components/page-shell';
 import AccountsPage from './features/accounts/accounts-page';
 
+const AppShell = lazyRouteComponent(() => import('./components/app-shell'), 'AppShell');
+const MainLayout = lazyRouteComponent(() => import('./components/app-shell'), 'MainLayout');
 const AnalyticsPage = lazyRouteComponent(() => import('./features/analytics/analytics-page'));
 const BillingPage = lazyRouteComponent(() => import('./features/billing/billing-page'));
 const ConfigPage = lazyRouteComponent(() => import('./features/config/config-page'));
@@ -21,86 +23,111 @@ const EditPromptPage = lazyRouteComponent(
   'EditPromptPage',
 );
 const SessionsPage = lazyRouteComponent(() => import('./features/sessions/sessions-page'));
+const SettingsLayout = lazyRouteComponent(() => import('./features/settings/settings-layout'));
 const SettingsPage = lazyRouteComponent(() => import('./features/settings/settings-page'));
 const AboutPage = lazyRouteComponent(
   () => import('./features/settings/settings-page'),
   'AboutPage',
 );
 
-const rootRoute = createRootRoute({ component: AppLayout });
+const rootRoute = createRootRoute({ component: AppShell });
+
+const mainLayoutRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  id: 'main',
+  component: MainLayout,
+});
 
 const indexRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => mainLayoutRoute,
   path: '/',
+  beforeLoad: () => {
+    throw redirect({ to: '/accounts' });
+  },
+});
+
+const accountsRoute = createRoute({
+  getParentRoute: () => mainLayoutRoute,
+  path: '/accounts',
   component: AccountsPage,
 });
 
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
+  component: SettingsLayout,
+  beforeLoad: ({ location }) => {
+    if (location.pathname === '/settings') throw redirect({ to: '/settings/general' });
+  },
+});
+
+const generalSettingsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: '/general',
   component: SettingsPage,
 });
 
 const billingRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/settings/billing',
+  getParentRoute: () => settingsRoute,
+  path: '/billing',
   component: BillingPage,
 });
 
 const aboutRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/settings/about',
+  getParentRoute: () => settingsRoute,
+  path: '/about',
   component: AboutPage,
 });
 
 const configRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => mainLayoutRoute,
   path: '/config',
   component: ConfigPage,
 });
 
 const promptsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => mainLayoutRoute,
   path: '/prompts',
   component: PromptsPage,
 });
 
 const newPromptRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => mainLayoutRoute,
   path: '/prompts/new',
   component: NewPromptPage,
 });
 
 const editPromptRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => mainLayoutRoute,
   path: '/prompts/edit/$profileId',
   component: EditPromptPage,
 });
 
 const sessionsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => mainLayoutRoute,
   path: '/sessions',
   component: SessionsPage,
 });
 
 const analyticsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => mainLayoutRoute,
   path: '/analytics',
   component: AnalyticsPage,
 });
 
 export const router = createRouter({
   routeTree: rootRoute.addChildren([
-    indexRoute,
-    sessionsRoute,
-    analyticsRoute,
-    promptsRoute,
-    newPromptRoute,
-    editPromptRoute,
-    settingsRoute,
-    billingRoute,
-    aboutRoute,
-    configRoute,
+    mainLayoutRoute.addChildren([
+      indexRoute,
+      accountsRoute,
+      sessionsRoute,
+      analyticsRoute,
+      promptsRoute,
+      newPromptRoute,
+      editPromptRoute,
+      configRoute,
+    ]),
+    settingsRoute.addChildren([generalSettingsRoute, billingRoute, aboutRoute]),
   ]),
   history: createHashHistory(),
 });

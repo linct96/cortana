@@ -1,9 +1,9 @@
 import { Link, useBlocker, useNavigate, useParams } from '@tanstack/react-router';
-import { invoke } from '@tauri-apps/api/core';
 import CodeMirror, { EditorView } from '@uiw/react-codemirror';
 import { ArrowLeft, LoaderCircle, Save } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { invoke } from '../../backend';
 import { PageHeader, PageShell } from '../../components/page-shell';
 import { Badge } from '../../components/ui/badge';
 import { Button, buttonVariants } from '../../components/ui/button';
@@ -37,7 +37,7 @@ export function NewPromptPage() {
 }
 
 export function EditPromptPage() {
-  const { profileId } = useParams({ from: '/prompts/edit/$profileId' });
+  const { profileId } = useParams({ from: '/main/prompts/edit/$profileId' });
   return <PromptEditorPage profileId={profileId} />;
 }
 
