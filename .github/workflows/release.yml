@@ -14,9 +14,11 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            target: aarch64-apple-darwin
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles dmg
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            targets: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -27,13 +29,13 @@ jobs:
           cache: pnpm
       - uses: dtolnay/rust-toolchain@1.93.0
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.targets }}
       - run: pnpm install --frozen-lockfile
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          args: --target ${{ matrix.target }}
+          args: ${{ matrix.args }}
           tagName: ${{ github.ref_name }}
           releaseName: Cortana ${{ github.ref_name }}
           generateReleaseNotes: true
