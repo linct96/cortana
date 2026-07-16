@@ -38,7 +38,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import { WindowTitleBar } from './window-title-bar';
 
 export type MainPath = '/accounts' | '/sessions' | '/analytics' | '/prompts' | '/config';
 
@@ -58,7 +57,6 @@ export function useAppShell() {
 }
 
 export function AppShell() {
-  const isWindows = isTauri && navigator.userAgent.includes('Windows');
   const isMacOS = isTauri && navigator.userAgent.includes('Mac');
   const topPadding = isMacOS ? 'pt-10' : 'pt-3';
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -80,7 +78,6 @@ export function AppShell() {
       }}
     >
       <div className="relative flex h-screen min-h-0 bg-background text-foreground">
-        {isWindows && <WindowTitleBar />}
         {isMacOS && <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-40 h-10" />}
         <Outlet />
       </div>
