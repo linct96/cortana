@@ -264,7 +264,7 @@ fn normalize_install_method(value: &str) -> &'static str {
 }
 
 pub(super) fn codex_command(candidate: &Path, arguments: &[&str]) -> Command {
-    if candidate
+    let mut command = if candidate
         .extension()
         .is_some_and(|extension| extension == "cmd")
     {
@@ -275,7 +275,15 @@ pub(super) fn codex_command(candidate: &Path, arguments: &[&str]) -> Command {
         let mut command = Command::new(candidate);
         command.args(arguments);
         command
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
+
+    command
 }
 
 #[cfg(test)]
