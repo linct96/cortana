@@ -145,11 +145,6 @@ pub fn run() {
             tray::show_main_window(app);
         }))
         .setup(|app| {
-            #[cfg(target_os = "windows")]
-            app.get_webview_window("main")
-                .expect("main window missing")
-                .set_decorations(false)?;
-
             let home_dir = app.path().home_dir().map_err(|error| error.to_string())?;
             let data_dir = home_dir.join(".cortana");
             fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
