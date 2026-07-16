@@ -216,9 +216,49 @@ pub(super) fn set_setting(connection: &Connection, key: &str, value: &str) -> Re
     Ok(())
 }
 
+pub(super) fn set_web_access_settings(
+    connection: &mut Connection,
+    enabled: bool,
+    port: u16,
+) -> Result<(), String> {
+    let transaction = connection.transaction().map_err(database_error)?;
+    transaction
+        .execute(
+            "INSERT INTO settings (key, value) VALUES ('web_access_enabled', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![enabled.to_string()],
+        )
+        .map_err(database_error)?;
+    transaction
+        .execute(
+            "INSERT INTO settings (key, value) VALUES ('web_access_port', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![port.to_string()],
+        )
+        .map_err(database_error)?;
+    transaction.commit().map_err(database_error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saves_web_access_settings_together() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);",
+            )
+            .unwrap();
+        set_web_access_settings(&mut connection, true, 11456).unwrap();
+        assert_eq!(
+            get_setting(&connection, "web_access_enabled").unwrap(),
+            Some("true".to_string())
+        );
+        assert_eq!(
+            get_setting(&connection, "web_access_port").unwrap(),
+            Some("11456".to_string())
+        );
+    }
 
     #[test]
     fn migrates_legacy_database() {

@@ -35,6 +35,7 @@ mod billing;
 mod codex;
 mod db;
 mod env;
+mod local_web;
 mod oauth;
 mod sessions;
 mod state;
@@ -162,6 +163,8 @@ pub fn run() {
             db::initialize_database(&state)?;
             app.manage(state);
 
+            local_web::initialize(app.handle())?;
+
             let state = app.state::<AppState>();
             let connection = db::open_database(&state)?;
             if db::get_setting(&connection, "autostart_initialized")?.is_none() {
@@ -179,50 +182,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            accounts::get_app_status,
-            accounts::switch_profile,
-            oauth::start_oauth_add,
-            oauth::cancel_oauth_add,
-            accounts::import_current_profile,
-            oauth::import_auth_json,
-            accounts::add_relay_profile,
-            accounts::refresh_profile_usage,
-            accounts::get_profile_reset_credits,
-            accounts::get_profile_auth,
-            accounts::update_profile,
-            accounts::update_relay_profile,
-            accounts::reorder_profiles,
-            accounts::delete_profile,
-            accounts::set_codex_home,
-            agents::get_agents_status,
-            agents::create_agents_profile,
-            agents::update_agents_profile,
-            agents::activate_agents_profile,
-            agents::import_current_agents,
-            agents::delete_agents_profile,
-            analytics::get_codex_usage_analytics,
-            billing::list_model_pricing,
-            billing::save_model_pricing,
-            billing::delete_model_pricing,
-            billing::fetch_models_dev_pricing,
-            codex::get_codex_config,
-            codex::validate_codex_config,
-            codex::format_codex_config,
-            codex::save_codex_config,
-            env::is_codex_cli_available,
-            env::get_codex_cli_environment,
-            env::get_claude_cli_environment,
-            sessions::list_codex_sessions,
-            sessions::rename_codex_session,
-            sessions::archive_codex_session,
-            sessions::restore_codex_session,
-            sessions::delete_codex_session,
-            set_autostart,
-            reveal_data_directory,
-            open_codex_home,
-            open_codex_cli_install_page,
-        ])
+        .invoke_handler(tauri::generate_handler![local_web::invoke_local])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();

@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../../backend';
 import CodeMirror, { EditorView } from '@uiw/react-codemirror';
 import { StreamLanguage } from '@codemirror/language';
 import { linter, lintGutter } from '@codemirror/lint';

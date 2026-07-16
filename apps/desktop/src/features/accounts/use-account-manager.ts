@@ -1,8 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import type { FormEvent } from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { invoke, listenOAuthProgress } from '../../backend';
 import { appError } from '../../utils';
 import type {
   AddMode,
@@ -34,6 +33,7 @@ export function useAccountManager() {
   const [confirm, setConfirm] = useState<PendingConfirm>(null);
   const [resetCreditsProfile, setResetCreditsProfile] = useState<Profile | null>(null);
   const [resetCredits, setResetCredits] = useState<ResetCredits | null>(null);
+  const oauthCleanupRef = useRef<(() => void) | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -61,21 +61,34 @@ export function useAccountManager() {
 
   useEffect(() => void refresh(), [refresh]);
 
-  useEffect(() => {
-    const unlisten = listen<OAuthProgress>('oauth-progress', ({ payload }) => {
+  const stopOAuthProgress = useCallback(() => {
+    oauthCleanupRef.current?.();
+    oauthCleanupRef.current = null;
+  }, []);
+
+  useEffect(() => stopOAuthProgress, [stopOAuthProgress]);
+
+  async function startOAuthProgress() {
+    stopOAuthProgress();
+    oauthCleanupRef.current = await listenOAuthProgress<OAuthProgress>((payload) => {
       setOauthMessage(payload.message);
       if (payload.stage === 'success') {
+        stopOAuthProgress();
         setBusy(null);
         closeAddDialog();
         toast.success(payload.message);
         void (payload.profile ? refreshNewAccount(payload.profile) : refresh());
       } else if (payload.stage === 'error') {
+        stopOAuthProgress();
         setBusy(null);
         toast.error(payload.message);
+      } else if (payload.stage === 'cancelled') {
+        stopOAuthProgress();
+        setBusy(null);
+        closeAddDialog();
       }
     });
-    return () => void unlisten.then((cleanup) => cleanup());
-  }, [refresh, refreshNewAccount]);
+  }
 
   const activeProfile =
     status?.detectedProfile ?? status?.profiles.find((profile) => profile.isActive) ?? null;
@@ -105,6 +118,7 @@ export function useAccountManager() {
     } catch (error) {
       toast.error(appError(error));
     } finally {
+      stopOAuthProgress();
       setBusy(null);
       closeAddDialog();
     }
@@ -207,8 +221,10 @@ export function useAccountManager() {
       setBusy('oauth');
       setOauthMessage('正在准备浏览器授权。');
       try {
+        await startOAuthProgress();
         await invoke('start_oauth_add', { alias: alias || null, activate: false });
       } catch (error) {
+        stopOAuthProgress();
         setBusy(null);
         toast.error(appError(error));
       }

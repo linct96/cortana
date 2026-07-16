@@ -282,6 +282,7 @@ pub(super) fn app_status(app: &tauri::AppHandle, state: &AppState) -> Result<App
         auth_path: auth_path.display().to_string(),
         auth_state,
         autostart_enabled,
+        web_access: local_web::web_access_status(app, state)?,
     })
 }
 

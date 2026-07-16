@@ -1,5 +1,4 @@
 import { Link } from '@tanstack/react-router';
-import { invoke } from '@tauri-apps/api/core';
 import {
   Ellipsis,
   FileText,
@@ -13,6 +12,7 @@ import {
 } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import { invoke } from '../../backend';
 import { PageHeader, PageShell } from '../../components/page-shell';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';

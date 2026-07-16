@@ -48,7 +48,7 @@ export type AppStatus = {
 };
 
 export type OAuthProgress = {
-  stage: 'browser_opening' | 'waiting' | 'exchanging' | 'success' | 'error';
+  stage: 'browser_opening' | 'waiting' | 'exchanging' | 'success' | 'error' | 'cancelled';
   message: string;
   profile: Profile | null;
 };
