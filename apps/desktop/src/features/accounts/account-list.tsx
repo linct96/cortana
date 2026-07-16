@@ -90,7 +90,7 @@ export function AccountRow({
         </div>
         <AccountMeta profile={profile} />
       </div>
-      <div className="pointer-events-none flex min-w-25 justify-end gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 has-[[data-popup-open]]:pointer-events-auto has-[[data-popup-open]]:opacity-100">
+      <div className="pointer-events-none flex min-w-25 justify-end gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 has-focus-visible:pointer-events-auto has-focus-visible:opacity-100 has-data-popup-open:pointer-events-auto has-data-popup-open:opacity-100">
         {!profile.isActive && (
           <Tooltip>
             <TooltipTrigger render={<span className="inline-flex" />}>
