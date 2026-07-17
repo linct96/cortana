@@ -22,14 +22,15 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-git fetch origin main --tags
+git fetch origin main
 
 if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
   echo "本地 main 与 origin/main 不一致，请先同步。" >&2
   exit 1
 fi
 
-if git show-ref --verify --quiet "refs/tags/$TAG"; then
+if git show-ref --verify --quiet "refs/tags/$TAG" ||
+  git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
   echo "Tag $TAG 已存在。" >&2
   exit 1
 fi
