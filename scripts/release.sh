@@ -22,14 +22,15 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-git fetch origin main --tags
+git fetch origin main
 
 if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
   echo "本地 main 与 origin/main 不一致，请先同步。" >&2
   exit 1
 fi
 
-if git show-ref --verify --quiet "refs/tags/$TAG"; then
+if git show-ref --verify --quiet "refs/tags/$TAG" ||
+  git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
   echo "Tag $TAG 已存在。" >&2
   exit 1
 fi
@@ -85,4 +86,4 @@ git commit -m "chore(release): $TAG"
 git tag -a "$TAG" -m "Cortana $TAG"
 git push --atomic origin main "$TAG"
 
-echo "已发布 $TAG，GitHub Actions 将自动构建正式安装包。"
+echo "已发布 ${TAG}，GitHub Actions 将自动构建正式安装包。"
