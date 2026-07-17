@@ -6,7 +6,8 @@
   "packageManager": "pnpm@11.8.0",
   "scripts": {
     "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "build": "tauri build"
+    "build": "tauri build",
+    "release": "bash scripts/release.sh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4"
