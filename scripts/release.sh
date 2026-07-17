@@ -85,4 +85,4 @@ git commit -m "chore(release): $TAG"
 git tag -a "$TAG" -m "Cortana $TAG"
 git push --atomic origin main "$TAG"
 
-echo "已发布 $TAG，GitHub Actions 将自动构建正式安装包。"
+echo "已发布 ${TAG}，GitHub Actions 将自动构建正式安装包。"
