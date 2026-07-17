@@ -1,4 +1,4 @@
-import { FolderOpen, RefreshCw } from 'lucide-react';
+import { ExternalLink, FolderOpen, RefreshCw } from 'lucide-react';
 import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { invoke, isTauri } from '../../backend';
@@ -9,6 +9,7 @@ import { Card, CardAction, CardContent, CardHeader, CardTitle } from '../../comp
 import { Field, FieldError } from '../../components/ui/field';
 import { Input } from '../../components/ui/input';
 import { Switch } from '../../components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { appError } from '../../utils';
 import { type CliEnvironment, isCliUpgradeAvailable } from './cli-environment';
 
@@ -95,6 +96,14 @@ function SettingsContent() {
     void saveWebAccess(true, true);
   }
 
+  async function openWebAccess() {
+    try {
+      await invoke('open_web_access');
+    } catch (error) {
+      toast.error(appError(error));
+    }
+  }
+
   return (
     <div className="w-full px-4 pt-6 pb-10 sm:px-8 lg:px-12">
       <div className="flex flex-col gap-6">
@@ -128,6 +137,22 @@ function SettingsContent() {
               <div className="flex min-w-0 flex-col gap-1">
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-medium">Web 访问</h3>
+                  {status?.webAccess.available && (
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="inline-flex" />}>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          type="button"
+                          onClick={() => void openWebAccess()}
+                        >
+                          <ExternalLink />
+                          <span className="sr-only">在浏览器中打开</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>在浏览器中打开</TooltipContent>
+                    </Tooltip>
+                  )}
                   <Badge
                     variant={
                       status?.webAccess.enabled

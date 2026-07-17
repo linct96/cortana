@@ -325,6 +325,7 @@ async fn dispatch_command(
         "open_codex_cli_install_page" => {
             result!(super::open_codex_cli_install_page(app.clone()))
         }
+        "open_web_access" => result!(open_web_access(app.clone())),
         "set_web_access_settings" => result!(set_web_access_settings(
             app.clone(),
             arg(&args, "enabled")?,
@@ -643,6 +644,13 @@ pub(super) fn browser_url(app: &tauri::AppHandle) -> Option<String> {
             format!("http://127.0.0.1:{}/?token={token}#/", status.port)
         }
     })
+}
+
+fn open_web_access(app: tauri::AppHandle) -> Result<(), String> {
+    let url = browser_url(&app).ok_or_else(|| "Web 访问未运行。".to_string())?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| error.to_string())
 }
 
 fn lock_error<T>(_: std::sync::PoisonError<T>) -> String {
