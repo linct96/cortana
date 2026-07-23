@@ -72,3 +72,15 @@ sh scripts/package-macos.sh
 ```
 
 正式发布前还需配置对应平台的代码签名；当前 CI 发布目标为 Windows x64 和 macOS arm64。
+
+## FAQ / 常见问题
+
+### macOS 提示“无法验证 Cortana.app 恶意软件”
+
+如果在 macOS 上打开应用时提示“Apple无法验证 Cortana.app 是否包含可能危害Mac安全或泄漏隐私的恶意软件”，可在终端运行以下命令清除隔离标记：
+
+```sh
+sudo xattr -r -d com.apple.quarantine /Applications/Cortana.app
+```
+
+> **注**：如果 `.app` 文件存放在其他路径（如未移动至 `/Applications`），请将命令中的路径替换为实际的 `Cortana.app` 路径。
