@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev:web": "vite",
-    "build:web": "tsc -b && vite build",
-    "check:component-size": "node scripts/check-component-size.mjs"
+    "build:web": "tsc -b && vite build"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
