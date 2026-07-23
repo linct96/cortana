@@ -344,31 +344,54 @@ async fn dispatch_command(
         "get_grok_cli_environment" => {
             result!(env::get_grok_cli_environment(app.state()).await)
         }
-        "list_codex_sessions" => result!(
-            sessions::list_codex_sessions(
+        "list_sessions" => result!(
+            sessions::list_sessions(
                 app.state(),
+                arg(&args, "product")?,
                 optional(&args, "cursor")?,
                 arg(&args, "archived")?,
                 optional(&args, "searchTerm")?
             )
             .await
         ),
-        "rename_codex_session" => result!(
-            sessions::rename_codex_session(
+        "rename_session" => result!(
+            sessions::rename_session(
                 app.state(),
+                arg(&args, "product")?,
                 arg(&args, "sessionId")?,
                 arg(&args, "name")?
             )
             .await
         ),
-        "archive_codex_session" => {
-            result!(sessions::archive_codex_session(app.state(), arg(&args, "sessionId")?).await)
+        "archive_session" => {
+            result!(
+                sessions::archive_session(
+                    app.state(),
+                    arg(&args, "product")?,
+                    arg(&args, "sessionId")?
+                )
+                .await
+            )
         }
-        "restore_codex_session" => {
-            result!(sessions::restore_codex_session(app.state(), arg(&args, "sessionId")?).await)
+        "unarchive_session" => {
+            result!(
+                sessions::unarchive_session(
+                    app.state(),
+                    arg(&args, "product")?,
+                    arg(&args, "sessionId")?
+                )
+                .await
+            )
         }
-        "delete_codex_session" => {
-            result!(sessions::delete_codex_session(app.state(), arg(&args, "sessionId")?).await)
+        "delete_session" => {
+            result!(
+                sessions::delete_session(
+                    app.state(),
+                    arg(&args, "product")?,
+                    arg(&args, "sessionId")?
+                )
+                .await
+            )
         }
         "set_autostart" => result!(super::set_autostart(
             app.clone(),
