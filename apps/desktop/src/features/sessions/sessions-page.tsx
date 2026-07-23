@@ -2,6 +2,7 @@ import { invoke } from '../../backend';
 import { LoaderCircle, MessageSquare, RefreshCw, Search, TriangleAlert } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { useAppShell } from '../../components/app-shell-context';
 import { PageHeader, PageShell } from '../../components/page-shell';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
@@ -23,24 +24,34 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { appError } from '../../utils';
-import { SessionRow, type CodexSession } from './session-row';
+import { SessionRow, type SessionCapabilities, type SessionSummary } from './session-row';
 
-type CodexSessionPage = {
-  sessions: CodexSession[];
+type SessionPage = {
+  sessions: SessionSummary[];
   nextCursor: string | null;
+  capabilities: SessionCapabilities;
+};
+
+const EMPTY_CAPABILITIES: SessionCapabilities = {
+  supportsArchived: false,
+  canRename: false,
+  canArchive: false,
+  canDelete: false,
 };
 
 type PendingDialog =
-  | { kind: 'rename'; session: CodexSession; name: string }
-  | { kind: 'delete'; session: CodexSession }
+  | { kind: 'rename'; session: SessionSummary; name: string }
+  | { kind: 'delete'; session: SessionSummary }
   | null;
 
 export default function SessionsPage() {
+  const { activeProduct } = useAppShell();
   const [archived, setArchived] = useState(false);
   const [query, setQuery] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [sessions, setSessions] = useState<CodexSession[]>([]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState<SessionCapabilities>(EMPTY_CAPABILITIES);
   const [loading, setLoading] = useState<'list' | 'more' | null>('list');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +73,8 @@ export default function SessionsPage() {
       setLoading(append ? 'more' : 'list');
       if (!append) setError(null);
       try {
-        const page = await invoke<CodexSessionPage>('list_codex_sessions', {
+        const page = await invoke<SessionPage>('list_sessions', {
+          product: activeProduct,
           cursor,
           archived: targetArchived,
           searchTerm: targetSearchTerm || null,
@@ -70,6 +82,7 @@ export default function SessionsPage() {
         if (currentRequest !== requestId.current) return;
         setSessions((current) => (append ? [...current, ...page.sessions] : page.sessions));
         setNextCursor(page.nextCursor);
+        setCapabilities(page.capabilities);
       } catch (caught) {
         if (currentRequest !== requestId.current) return;
         const message = appError(caught);
@@ -80,10 +93,18 @@ export default function SessionsPage() {
         if (currentRequest === requestId.current) setLoading(null);
       }
     },
-    [],
+    [activeProduct],
   );
 
   useEffect(() => {
+    setArchived(false);
+    setQuery('');
+    setSearchTerm('');
+    setSessions([]);
+    setNextCursor(null);
+    setCapabilities(EMPTY_CAPABILITIES);
+    setDialog(null);
+    setBusyId(null);
     void loadSessions(false, '');
     return () => {
       requestId.current += 1;
@@ -109,17 +130,19 @@ export default function SessionsPage() {
     startQuery(archived, next);
   }
 
-  async function moveSession(session: CodexSession) {
-    const command = archived ? 'restore_codex_session' : 'archive_codex_session';
+  async function moveSession(session: SessionSummary) {
+    const command = archived ? 'unarchive_session' : 'archive_session';
+    const currentRequest = requestId.current;
     setBusyId(session.id);
     try {
-      await invoke(command, { sessionId: session.id });
+      await invoke(command, { product: activeProduct, sessionId: session.id });
+      if (currentRequest !== requestId.current) return;
       setSessions((current) => current.filter((item) => item.id !== session.id));
       toast.success(archived ? '会话已恢复。' : '会话已归档。');
     } catch (caught) {
-      toast.error(appError(caught));
+      if (currentRequest === requestId.current) toast.error(appError(caught));
     } finally {
-      setBusyId(null);
+      if (currentRequest === requestId.current) setBusyId(null);
     }
   }
 
@@ -128,9 +151,15 @@ export default function SessionsPage() {
     if (dialog?.kind !== 'rename') return;
     const name = dialog.name.trim();
     if (!name) return;
+    const currentRequest = requestId.current;
     setBusyId(dialog.session.id);
     try {
-      await invoke('rename_codex_session', { sessionId: dialog.session.id, name });
+      await invoke('rename_session', {
+        product: activeProduct,
+        sessionId: dialog.session.id,
+        name,
+      });
+      if (currentRequest !== requestId.current) return;
       setSessions((current) =>
         current.map((session) =>
           session.id === dialog.session.id ? { ...session, name } : session,
@@ -139,24 +168,29 @@ export default function SessionsPage() {
       setDialog(null);
       toast.success('会话已重命名。');
     } catch (caught) {
-      toast.error(appError(caught));
+      if (currentRequest === requestId.current) toast.error(appError(caught));
     } finally {
-      setBusyId(null);
+      if (currentRequest === requestId.current) setBusyId(null);
     }
   }
 
   async function deleteSession() {
     if (dialog?.kind !== 'delete') return;
+    const currentRequest = requestId.current;
     setBusyId(dialog.session.id);
     try {
-      await invoke('delete_codex_session', { sessionId: dialog.session.id });
+      await invoke('delete_session', {
+        product: activeProduct,
+        sessionId: dialog.session.id,
+      });
+      if (currentRequest !== requestId.current) return;
       setSessions((current) => current.filter((session) => session.id !== dialog.session.id));
       setDialog(null);
       toast.success('会话已永久删除。');
     } catch (caught) {
-      toast.error(appError(caught));
+      if (currentRequest === requestId.current) toast.error(appError(caught));
     } finally {
-      setBusyId(null);
+      if (currentRequest === requestId.current) setBusyId(null);
     }
   }
 
@@ -187,6 +221,7 @@ export default function SessionsPage() {
         query={query}
         searchTerm={searchTerm}
         sessions={sessions}
+        capabilities={capabilities}
         nextCursor={nextCursor}
         loading={loading}
         busyId={busyId}
@@ -210,6 +245,7 @@ function SessionsContent({
   query,
   searchTerm,
   sessions,
+  capabilities,
   nextCursor,
   loading,
   busyId,
@@ -227,7 +263,8 @@ function SessionsContent({
   archived: boolean;
   query: string;
   searchTerm: string;
-  sessions: CodexSession[];
+  sessions: SessionSummary[];
+  capabilities: SessionCapabilities;
   nextCursor: string | null;
   loading: 'list' | 'more' | null;
   busyId: string | null;
@@ -237,7 +274,7 @@ function SessionsContent({
   onQueryChange: (query: string) => void;
   onSearch: (event: FormEvent) => void;
   onLoad: (cursor?: string | null) => Promise<void>;
-  onMove: (session: CodexSession) => Promise<void>;
+  onMove: (session: SessionSummary) => Promise<void>;
   onDialogChange: (dialog: PendingDialog) => void;
   onRename: (event: FormEvent) => Promise<void>;
   onDelete: () => Promise<void>;
@@ -250,10 +287,14 @@ function SessionsContent({
         onValueChange={(value) => onArchivedChange(value === 'archived')}
       >
         <div className="flex items-center justify-between gap-4 border-b border-border px-4 pb-4 sm:px-8 lg:px-12">
-          <TabsList>
-            <TabsTrigger value="active">当前</TabsTrigger>
-            <TabsTrigger value="archived">已归档</TabsTrigger>
-          </TabsList>
+          {capabilities.supportsArchived ? (
+            <TabsList>
+              <TabsTrigger value="active">当前</TabsTrigger>
+              <TabsTrigger value="archived">已归档</TabsTrigger>
+            </TabsList>
+          ) : (
+            <span />
+          )}
           <form className="w-full max-w-72" onSubmit={onSearch}>
             <InputGroup>
               <InputGroupInput
@@ -295,6 +336,7 @@ function SessionsContent({
                   <SessionRow
                     key={session.id}
                     session={session}
+                    capabilities={capabilities}
                     archived={archived}
                     busy={busyId === session.id}
                     onRename={() =>
