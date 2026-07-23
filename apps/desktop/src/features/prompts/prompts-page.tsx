@@ -16,7 +16,8 @@ import { invoke } from '../../backend';
 import { PageHeader, PageShell } from '../../components/page-shell';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
-import { Button, buttonVariants } from '../../components/ui/button';
+import { Button } from '../../components/ui/button';
+import { buttonVariants } from '../../components/ui/button-variants';
 import {
   DropdownMenu,
   DropdownMenuContent,

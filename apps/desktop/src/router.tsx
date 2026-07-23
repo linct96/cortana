@@ -6,10 +6,10 @@ import {
   lazyRouteComponent,
   redirect,
 } from '@tanstack/react-router';
-import AccountsPage from './features/accounts/accounts-page';
 
 const AppShell = lazyRouteComponent(() => import('./components/app-shell'), 'AppShell');
 const MainLayout = lazyRouteComponent(() => import('./components/app-shell'), 'MainLayout');
+const AccountsPage = lazyRouteComponent(() => import('./features/accounts/accounts-page'));
 const AnalyticsPage = lazyRouteComponent(() => import('./features/analytics/analytics-page'));
 const BillingPage = lazyRouteComponent(() => import('./features/billing/billing-page'));
 const ConfigPage = lazyRouteComponent(() => import('./features/config/config-page'));
