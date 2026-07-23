@@ -17,6 +17,7 @@ path = "src/main.rs"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
+prost = "0.13"
 reqwest = { version = "0.12", default-features = false, features = [
   "blocking",
   "json",

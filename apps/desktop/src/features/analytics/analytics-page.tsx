@@ -1,4 +1,5 @@
 import { invoke } from '../../backend';
+import { useAppShell, type AccountProduct } from '../../components/app-shell-context';
 import { LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts';
@@ -26,6 +27,7 @@ const defaultRange: UsageRange = 'today';
 type TokenUsage = {
   inputTokens: number;
   cachedInputTokens: number;
+  cacheWriteInputTokens: number;
   outputTokens: number;
   reasoningOutputTokens: number;
   totalTokens: number;
@@ -81,19 +83,21 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 export default function AnalyticsPage() {
+  const { activeProduct } = useAppShell();
   const [range, setRange] = useState<UsageRange>(defaultRange);
   const [analytics, setAnalytics] = useState<UsageAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef(0);
 
-  const refresh = useCallback(async (targetRange: UsageRange) => {
+  const refresh = useCallback(async (product: AccountProduct, targetRange: UsageRange) => {
     const currentRequest = ++requestId.current;
     setLoading(true);
     setError(null);
     setAnalytics(null);
     try {
-      const result = await invoke<UsageAnalytics>('get_codex_usage_analytics', {
+      const result = await invoke<UsageAnalytics>('get_usage_analytics', {
+        product,
         range: targetRange,
       });
       if (currentRequest === requestId.current) setAnalytics(result);
@@ -105,11 +109,11 @@ export default function AnalyticsPage() {
   }, []);
 
   useEffect(() => {
-    void refresh(defaultRange);
+    void refresh(activeProduct, range);
     return () => {
       requestId.current += 1;
     };
-  }, [refresh]);
+  }, [activeProduct, range, refresh]);
 
   return (
     <PageShell>
@@ -127,7 +131,6 @@ export default function AnalyticsPage() {
                 const next = values[0] as UsageRange | undefined;
                 if (!next || next === range) return;
                 setRange(next);
-                void refresh(next);
               }}
             >
               {ranges.map((item) => (
@@ -142,7 +145,7 @@ export default function AnalyticsPage() {
                   variant="ghost"
                   size="icon"
                   type="button"
-                  onClick={() => void refresh(range)}
+                  onClick={() => void refresh(activeProduct, range)}
                   disabled={loading}
                 >
                   <RefreshCw className={loading ? 'animate-spin' : ''} />
@@ -196,7 +199,7 @@ function AnalyticsContent({ analytics, range }: { analytics: UsageAnalytics; ran
         <Alert>
           <TriangleAlert />
           <AlertTitle>部分记录未统计</AlertTitle>
-          <AlertDescription>有 {analytics.skippedFiles} 个会话文件无法读取。</AlertDescription>
+          <AlertDescription>有 {analytics.skippedFiles} 个会话数据文件无法读取。</AlertDescription>
         </Alert>
       )}
 
@@ -228,7 +231,12 @@ function AnalyticsContent({ analytics, range }: { analytics: UsageAnalytics; ran
         {analytics.models.length ? (
           <div className="border-y border-border">
             {analytics.models.map((model) => (
-              <ModelRow key={model.model} usage={model} totalTokens={analytics.total.totalTokens} />
+              <ModelRow
+                key={model.model}
+                usage={model}
+                totalTokens={analytics.total.totalTokens}
+                showCacheWrite={analytics.total.cacheWriteInputTokens > 0}
+              />
             ))}
           </div>
         ) : (
@@ -319,11 +327,20 @@ function UsageChart({ buckets }: { buckets: UsageBucket[] }) {
   );
 }
 
-function ModelRow({ usage, totalTokens }: { usage: ModelUsage; totalTokens: number }) {
+function ModelRow({
+  usage,
+  totalTokens,
+  showCacheWrite,
+}: {
+  usage: ModelUsage;
+  totalTokens: number;
+  showCacheWrite: boolean;
+}) {
   const share = totalTokens ? (usage.tokens.totalTokens / totalTokens) * 100 : 0;
   const metrics = [
     ['输入', usage.tokens.inputTokens],
     ['缓存输入', usage.tokens.cachedInputTokens],
+    ...(showCacheWrite ? ([['缓存写入', usage.tokens.cacheWriteInputTokens]] as const) : []),
     ['输出', usage.tokens.outputTokens],
     ['推理输出', usage.tokens.reasoningOutputTokens],
   ] as const;
@@ -345,7 +362,13 @@ function ModelRow({ usage, totalTokens }: { usage: ModelUsage; totalTokens: numb
         </div>
       </div>
       <Progress value={share} aria-label={`${usage.model} 占比 ${share.toFixed(1)}%`} />
-      <div className="grid gap-3 text-xs sm:grid-cols-3 xl:grid-cols-6">
+      <div
+        className={
+          showCacheWrite
+            ? 'grid gap-3 text-xs sm:grid-cols-3 xl:grid-cols-7'
+            : 'grid gap-3 text-xs sm:grid-cols-3 xl:grid-cols-6'
+        }
+      >
         {metrics.map(([label, value]) => (
           <TokenDetail key={label} label={String(label)} value={Number(value)} />
         ))}

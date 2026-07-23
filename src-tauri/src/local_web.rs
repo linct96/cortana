@@ -280,8 +280,15 @@ async fn dispatch_command(
             app.state(),
             arg(&args, "profileId")?
         )),
-        "get_codex_usage_analytics" => {
-            result!(analytics::get_codex_usage_analytics(app.state(), arg(&args, "range")?).await)
+        "get_usage_analytics" => {
+            result!(
+                analytics::get_usage_analytics(
+                    app.state(),
+                    arg(&args, "product")?,
+                    arg(&args, "range")?
+                )
+                .await
+            )
         }
         "list_model_pricing" => result!(billing::list_model_pricing(app.state())),
         "save_model_pricing" => result!(billing::save_model_pricing(
