@@ -1,4 +1,4 @@
-use super::{accounts::*, codex::*, db::*, *};
+use super::{accounts::*, antigravity, claude, db::*, grok, *};
 
 pub(super) fn install_tray(app: &tauri::AppHandle) -> Result<(), String> {
     let menu = build_tray_menu(app)?;
@@ -18,9 +18,60 @@ pub(super) fn install_tray(app: &tauri::AppHandle) -> Result<(), String> {
                 }
             } else if id == "quit" {
                 app.exit(0);
-            } else if let Some(profile_id) = id.strip_prefix("switch:") {
-                let state = app.state::<AppState>();
-                if switch_profile_internal(&state, profile_id, false).is_err() {
+            } else if let Some(value) = id.strip_prefix("switch:") {
+                let Some((product, profile_id)) = value.split_once(':') else {
+                    return;
+                };
+                if product == "antigravity" {
+                    let app = app.clone();
+                    let profile_id = profile_id.to_string();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let result = antigravity::switch_profile(
+                            &app.state::<AppState>(),
+                            &profile_id,
+                            false,
+                        );
+                        if result.is_err() {
+                            show_main_window(&app);
+                        } else {
+                            let _ = refresh_tray(&app);
+                        }
+                    });
+                    return;
+                }
+                if product == "claude" {
+                    let app = app.clone();
+                    let profile_id = profile_id.to_string();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let result =
+                            claude::switch_profile(&app.state::<AppState>(), &profile_id, false);
+                        if result.is_err() {
+                            show_main_window(&app);
+                        } else {
+                            let _ = refresh_tray(&app);
+                        }
+                    });
+                    return;
+                }
+                if product == "grok" {
+                    let app = app.clone();
+                    let profile_id = profile_id.to_string();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let result =
+                            grok::switch_profile(&app.state::<AppState>(), &profile_id, false);
+                        if result.is_err() {
+                            show_main_window(&app);
+                        } else {
+                            let _ = refresh_tray(&app);
+                        }
+                    });
+                    return;
+                }
+                if product != "codex" {
+                    return;
+                }
+                let result = switch_profile_internal(&app.state::<AppState>(), profile_id, false);
+                if result.is_err() {
                     show_main_window(app);
                 } else {
                     let _ = refresh_tray(app);
@@ -54,9 +105,19 @@ pub(super) fn refresh_tray(app: &tauri::AppHandle) -> Result<(), String> {
 pub(super) fn build_tray_menu(app: &tauri::AppHandle) -> Result<Menu<tauri::Wry>, String> {
     let state = app.state::<AppState>();
     let connection = open_database(&state)?;
-    let path = auth_path(&state)?;
-    let (_, active_id) = resolve_auth_state(&connection, &path)?;
-    let profiles = list_profiles(&connection, active_id.as_deref())?;
+    let product = match get_setting(&connection, "active_product")?.as_deref() {
+        Some("claude") => AccountProduct::Claude,
+        Some("antigravity") => AccountProduct::Antigravity,
+        Some("grok") => AccountProduct::Grok,
+        _ => AccountProduct::Codex,
+    };
+    drop(connection);
+    let profiles = match product {
+        AccountProduct::Codex => app_status(app, &state)?.profiles,
+        AccountProduct::Claude => claude::app_status(app, &state)?.profiles,
+        AccountProduct::Antigravity => antigravity::app_status(app, &state)?.profiles,
+        AccountProduct::Grok => grok::app_status(app, &state)?.profiles,
+    };
     let menu = Menu::new(app).map_err(|error| error.to_string())?;
     let current_label = profiles
         .iter()
@@ -76,9 +137,9 @@ pub(super) fn build_tray_menu(app: &tauri::AppHandle) -> Result<Menu<tauri::Wry>
         };
         let item = MenuItem::with_id(
             app,
-            format!("switch:{}", profile.id),
+            format!("switch:{}:{}", product.as_str(), profile.id),
             label,
-            true,
+            !profile.is_active,
             None::<&str>,
         )
         .map_err(|error| error.to_string())?;

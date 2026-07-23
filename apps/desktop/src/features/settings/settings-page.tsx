@@ -244,6 +244,8 @@ function AboutContent() {
   const [environments, setEnvironments] = useState<{
     codex: CliEnvironment;
     claude: CliEnvironment;
+    antigravity: CliEnvironment;
+    grok: CliEnvironment;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const requestId = useRef(0);
@@ -252,11 +254,15 @@ function AboutContent() {
     const currentRequest = ++requestId.current;
     setLoading(true);
     try {
-      const [codex, claude] = await Promise.all([
+      const [codex, claude, antigravity, grok] = await Promise.all([
         invoke<CliEnvironment>('get_codex_cli_environment'),
         invoke<CliEnvironment>('get_claude_cli_environment'),
+        invoke<CliEnvironment>('get_antigravity_cli_environment'),
+        invoke<CliEnvironment>('get_grok_cli_environment'),
       ]);
-      if (currentRequest === requestId.current) setEnvironments({ codex, claude });
+      if (currentRequest === requestId.current) {
+        setEnvironments({ codex, claude, antigravity, grok });
+      }
     } catch (error) {
       if (currentRequest === requestId.current) toast.error(appError(error));
     } finally {
@@ -289,7 +295,7 @@ function AboutContent() {
         }
       />
       <div className="w-full px-4 pt-6 pb-10 sm:px-8 lg:px-12">
-        <section className="grid gap-3 lg:grid-cols-2">
+        <section className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
           <CliEnvironmentCard
             title="Codex CLI"
             environment={environments?.codex}
@@ -300,6 +306,12 @@ function AboutContent() {
             environment={environments?.claude}
             loading={loading}
           />
+          <CliEnvironmentCard
+            title="Antigravity CLI"
+            environment={environments?.antigravity}
+            loading={loading}
+          />
+          <CliEnvironmentCard title="Grok CLI" environment={environments?.grok} loading={loading} />
         </section>
       </div>
     </>

@@ -2,6 +2,7 @@ import { useSortable } from '@dnd-kit/react/sortable';
 import {
   ArrowLeftRight,
   Ellipsis,
+  Gauge,
   GripVertical,
   LoaderCircle,
   Pencil,
@@ -10,7 +11,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Fragment } from 'react';
+import antigravityIcon from '../../assets/antigravity.png';
 import chatGptIcon from '../../assets/chatgpt.svg';
+import claudeIcon from '../../assets/claude.svg';
+import grokIcon from '../../assets/grok.svg';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import {
@@ -24,7 +28,7 @@ import { Progress, ProgressLabel, ProgressValue } from '../../components/ui/prog
 import { Separator } from '../../components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { cn, formatResetTime } from '../../utils';
-import type { Profile, UsageWindow } from './types';
+import { planLabel, type Profile, type UsageWindow } from './types';
 
 export function AccountRow({
   profile,
@@ -34,6 +38,7 @@ export function AccountRow({
   onSwitch,
   onRefresh,
   onEdit,
+  onViewQuota,
   onViewResetCredits,
   onDelete,
 }: {
@@ -44,6 +49,7 @@ export function AccountRow({
   onSwitch: () => void;
   onRefresh: () => void;
   onEdit: () => void;
+  onViewQuota: () => void;
   onViewResetCredits: () => void;
   onDelete: () => void;
 }) {
@@ -77,7 +83,19 @@ export function AccountRow({
       </button>
       <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-sm font-semibold text-primary">
         {profile.accountType === 'oauth' ? (
-          <img src={chatGptIcon} alt="" className="size-5" />
+          <img
+            src={
+              profile.product === 'antigravity'
+                ? antigravityIcon
+                : profile.product === 'claude'
+                  ? claudeIcon
+                  : profile.product === 'grok'
+                    ? grokIcon
+                    : chatGptIcon
+            }
+            alt=""
+            className="size-5"
+          />
         ) : (
           (profile.alias || profile.email || '?').slice(0, 1).toUpperCase()
         )}
@@ -88,7 +106,7 @@ export function AccountRow({
           {profile.planType && <Badge variant="outline">{planLabel(profile.planType)}</Badge>}
           {profile.isActive && <Badge>使用中</Badge>}
         </div>
-        <AccountMeta profile={profile} />
+        <AccountMeta profile={profile} onViewQuota={onViewQuota} />
       </div>
       <div className="pointer-events-none flex min-w-25 justify-end gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 has-focus-visible:pointer-events-auto has-focus-visible:opacity-100 has-data-popup-open:pointer-events-auto has-data-popup-open:opacity-100">
         {!profile.isActive && (
@@ -114,10 +132,23 @@ export function AccountRow({
               </DropdownMenuItem>
               {profile.accountType === 'oauth' && (
                 <>
-                  <DropdownMenuItem onClick={onRefresh} disabled={isRefreshing}>
-                    <RefreshCw className={isRefreshing ? 'animate-spin' : ''} /> 刷新
+                  <DropdownMenuItem
+                    onClick={onRefresh}
+                    disabled={
+                      isRefreshing || (profile.product === 'claude' && !profile.isRenewable)
+                    }
+                  >
+                    <RefreshCw className={isRefreshing ? 'animate-spin' : ''} />
+                    {profile.product === 'claude' ? '更新登录令牌' : '刷新'}
                   </DropdownMenuItem>
-                  {profile.planType.trim() && profile.planType.trim().toLowerCase() !== 'free' ? (
+                  {profile.product === 'antigravity' && (
+                    <DropdownMenuItem onClick={onViewQuota}>
+                      <Gauge /> 额度详情
+                    </DropdownMenuItem>
+                  )}
+                  {profile.product === 'codex' &&
+                  profile.planType.trim() &&
+                  profile.planType.trim().toLowerCase() !== 'free' ? (
                     <DropdownMenuItem onClick={onViewResetCredits}>
                       <Tickets /> 重置卡
                     </DropdownMenuItem>
@@ -168,40 +199,118 @@ export function AccountBalance({
           <TooltipContent>刷新当前账户信息</TooltipContent>
         </Tooltip>
       </div>
-      {windows.length ? (
-        <div className="flex flex-col gap-3">
-          {windows.map((window, index) => {
-            const remaining = remainingPercent(window);
-            return (
-              <Progress
-                key={window.windowMinutes ?? index}
-                value={remaining}
-                className={
-                  remaining <= 10
-                    ? 'gap-1.5 [&_[data-slot=progress-indicator]]:bg-destructive'
-                    : 'gap-1.5'
-                }
-              >
-                <ProgressLabel>
-                  {window.resetsAt ? `${formatResetTime(window.resetsAt)}重置` : '剩余额度'}
-                </ProgressLabel>
-                <ProgressValue />
-              </Progress>
-            );
-          })}
-        </div>
-      ) : (
-        <span className="text-sm text-muted-foreground">额度未查询</span>
-      )}
+      <UsageProgressList
+        items={windows.map((window, index) => ({
+          key: String(window.windowMinutes ?? index),
+          label: window.resetsAt ? `${formatResetTime(window.resetsAt)}重置` : '剩余额度',
+          remainingPercent: remainingPercent(window),
+          resetsAt: null,
+        }))}
+        emptyText={
+          profile.product === 'grok' && profile.usageUpdatedAt
+            ? '官方未返回额度百分比'
+            : '额度未查询'
+        }
+      />
     </div>
   );
 }
 
-function AccountMeta({ profile }: { profile: Profile }) {
+export function UsageProgressList({
+  items,
+  emptyText = '额度未查询',
+}: {
+  items: {
+    key: string;
+    label: string;
+    remainingPercent: number;
+    resetsAt: number | null;
+  }[];
+  emptyText?: string;
+}) {
+  return items.length ? (
+    <div className="flex flex-col gap-3">
+      {items.map((item) => (
+        <Progress
+          key={item.key}
+          value={item.remainingPercent}
+          className={
+            item.remainingPercent <= 10
+              ? 'gap-1.5 [&_[data-slot=progress-indicator]]:bg-destructive'
+              : 'gap-1.5'
+          }
+        >
+          <ProgressLabel>
+            {item.label}
+            {item.resetsAt ? ` · ${formatResetTime(item.resetsAt)}重置` : ''}
+          </ProgressLabel>
+          <ProgressValue />
+        </Progress>
+      ))}
+    </div>
+  ) : (
+    <span className="text-sm text-muted-foreground">{emptyText}</span>
+  );
+}
+
+function AccountMeta({ profile, onViewQuota }: { profile: Profile; onViewQuota: () => void }) {
+  if (profile.product === 'antigravity') {
+    const quota = profile.antigravityQuota;
+    const summaries = quota
+      ? quota.groups
+          .flatMap((group) =>
+            group.buckets.map((bucket) => ({
+              key: `${group.displayName}-${bucket.bucketId}`,
+              label: `${group.displayName} ${quotaWindowLabel(bucket.window)} ${bucket.remainingPercent}%`,
+              remaining: bucket.remainingPercent,
+            })),
+          )
+          .concat(
+            quota.groups.length
+              ? []
+              : quota.models.map((model) => ({
+                  key: model.modelId,
+                  label: `${model.displayName} ${model.remainingPercent}%`,
+                  remaining: model.remainingPercent,
+                })),
+          )
+          .sort((left, right) => left.remaining - right.remaining)
+          .slice(0, 2)
+      : [];
+    return (
+      <div className="mt-1.5 flex min-w-0 items-center text-xs text-muted-foreground">
+        {profile.email && <span className="min-w-0 truncate">{profile.email}</span>}
+        {quota?.forbidden ? (
+          <MetaSeparatorItem label="无权查询额度" destructive onClick={onViewQuota} />
+        ) : summaries.length ? (
+          summaries.map((item) => (
+            <MetaSeparatorItem
+              key={item.key}
+              label={item.label}
+              destructive={item.remaining <= 10}
+              onClick={onViewQuota}
+            />
+          ))
+        ) : (
+          <MetaSeparatorItem label="额度未查询" onClick={onViewQuota} />
+        )}
+      </div>
+    );
+  }
   const items: { key: string; label: string; destructive?: boolean }[] = [];
   if (profile.accountType === 'relay') {
     if (profile.apiBaseUrl) items.push({ key: 'api', label: profile.apiBaseUrl });
+  } else if (profile.product === 'claude') {
+    if (profile.email) {
+      items.push({ key: 'email', label: profile.email });
+    }
+    if (!profile.isRenewable) {
+      items.push({ key: 'reauthorize', label: '需重新授权' });
+    }
   } else {
+    if (profile.product === 'grok' && profile.email) {
+      items.push({ key: 'email', label: profile.email });
+    }
     [profile.usagePrimary, profile.usageSecondary].forEach((window, index) => {
       if (!window) return;
       const remaining = remainingPercent(window);
@@ -220,7 +329,11 @@ function AccountMeta({ profile }: { profile: Profile }) {
         label: `${profile.resetCreditsAvailableCount}次可用重置`,
       });
     }
-    if (!profile.usageUpdatedAt) items.push({ key: 'empty', label: '额度未查询' });
+    if (!profile.usageUpdatedAt) {
+      items.push({ key: 'empty', label: '额度未查询' });
+    } else if (profile.product === 'grok' && !profile.usagePrimary) {
+      items.push({ key: 'unavailable', label: '官方未返回额度百分比' });
+    }
   }
 
   return (
@@ -242,15 +355,41 @@ function AccountMeta({ profile }: { profile: Profile }) {
   );
 }
 
+function MetaSeparatorItem({
+  label,
+  destructive = false,
+  onClick,
+}: {
+  label: string;
+  destructive?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <>
+      <Separator
+        orientation="vertical"
+        className="mx-2 h-3 w-px shrink-0 self-center bg-muted-foreground/30"
+      />
+      <button
+        type="button"
+        className={cn(
+          'min-w-0 truncate text-left hover:text-foreground',
+          destructive && 'text-destructive',
+        )}
+        onClick={onClick}
+      >
+        {label}
+      </button>
+    </>
+  );
+}
+
 function remainingPercent(window: UsageWindow) {
   return Math.round(Math.max(0, Math.min(100, 100 - window.usedPercent)));
 }
 
-function planLabel(planType: string) {
-  const normalized = planType.trim().toLowerCase();
-  if (normalized === 'free') return 'Free';
-  if (normalized === 'plus') return 'Plus';
-  if (normalized === 'pro') return 'Pro';
-  if (normalized === 'team') return 'Team';
-  return normalized;
+function quotaWindowLabel(window: string) {
+  if (window.toLowerCase() === 'weekly') return '周';
+  if (window.toLowerCase() === '5h') return '5 小时';
+  return window;
 }

@@ -1,5 +1,6 @@
 import { Eye, EyeOff, LoaderCircle } from 'lucide-react';
 import type { FormEvent, ReactNode } from 'react';
+import { productName } from '../../components/app-shell-context';
 import { Button } from '../../components/ui/button';
 import {
   Dialog,
@@ -18,11 +19,12 @@ import {
 } from '../../components/ui/input-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
-import type { AddMode, PendingConfirm, Profile } from './types';
+import type { AccountProduct, AddMode, PendingConfirm, Profile } from './types';
 
 type Setter<T> = (value: T | ((current: T) => T)) => void;
 
 export function AddAccountDialog({
+  product,
   busy,
   addMode,
   alias,
@@ -40,6 +42,7 @@ export function AddAccountDialog({
   onSubmit,
   onClose,
 }: {
+  product: AccountProduct;
   busy: string | null;
   addMode: AddMode;
   alias: string;
@@ -57,7 +60,36 @@ export function AddAccountDialog({
   onSubmit: (event: FormEvent) => void;
   onClose: () => void;
 }) {
-  const saving = busy === 'oauth' || busy === 'auth-json' || busy === 'relay';
+  const saving = busy === 'oauth' || busy === 'auth-json' || busy === 'relay' || busy === 'import';
+  if (product !== 'codex' && product !== 'claude') {
+    return (
+      <AppDialog title="添加账号" onClose={onClose}>
+        <form className="flex flex-col gap-4" onSubmit={onSubmit}>
+          <Field label="别名" htmlFor="new-alias">
+            <Input
+              id="new-alias"
+              value={alias}
+              onChange={(event) => setAlias(event.target.value)}
+              placeholder="例如：工作账户"
+            />
+          </Field>
+          {oauthMessage && (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              {busy === 'oauth' && <LoaderCircle size={15} className="animate-spin" />}{' '}
+              {oauthMessage}
+            </p>
+          )}
+          <DialogFooter>
+            <CancelButton />
+            <Button type="submit" disabled={saving}>
+              {saving && <LoaderCircle size={16} className="animate-spin" />}
+              在浏览器中授权
+            </Button>
+          </DialogFooter>
+        </form>
+      </AppDialog>
+    );
+  }
   return (
     <AppDialog title="添加账号" contentClassName="sm:max-w-xl" onClose={onClose}>
       <form onSubmit={onSubmit}>
@@ -67,12 +99,16 @@ export function AddAccountDialog({
           onValueChange={(value) => setAddMode(value as AddMode)}
         >
           <TabsList className="w-full">
-            {(
-              [
-                ['browser', '浏览器授权'],
-                ['paste', '粘贴 auth.json'],
-                ['relay', '中转站'],
-              ] as const
+            {(product === 'codex'
+              ? [
+                  ['browser', '浏览器授权'],
+                  ['paste', '粘贴 auth.json'],
+                  ['relay', '中转站'],
+                ]
+              : [
+                  ['browser', '浏览器授权'],
+                  ['relay', '中转站'],
+                ]
             ).map(([value, label]) => (
               <TabsTrigger
                 key={value}
@@ -92,21 +128,23 @@ export function AddAccountDialog({
               placeholder="例如：工作账户"
             />
           </Field>
-          <TabsContent value="paste">
-            <Field label="auth.json" htmlFor="auth-json">
-              <Textarea
-                id="auth-json"
-                className="min-h-0 resize-none field-sizing-fixed font-mono text-xs"
-                value={authJson}
-                onChange={(event) => setAuthJson(event.target.value)}
-                placeholder='{"tokens":{"refresh_token":"..."}}'
-                rows={2}
-                autoComplete="off"
-                spellCheck={false}
-                required
-              />
-            </Field>
-          </TabsContent>
+          {product === 'codex' && (
+            <TabsContent value="paste">
+              <Field label="auth.json" htmlFor="auth-json">
+                <Textarea
+                  id="auth-json"
+                  className="min-h-0 resize-none field-sizing-fixed font-mono text-xs"
+                  value={authJson}
+                  onChange={(event) => setAuthJson(event.target.value)}
+                  placeholder='{"tokens":{"refresh_token":"..."}}'
+                  rows={2}
+                  autoComplete="off"
+                  spellCheck={false}
+                  required
+                />
+              </Field>
+            </TabsContent>
+          )}
           <TabsContent value="relay" className="flex flex-col gap-4">
             <Field label="API Key" htmlFor="relay-api-key">
               <SecretInput
@@ -191,8 +229,13 @@ export function EditAccountDialog({
             value={alias}
             onChange={(event) => setAlias(event.target.value)}
             placeholder={
-              editing.accountType === 'relay' ? '留空则使用 API 主机名' : '留空则使用邮箱账号'
+              editing.accountType === 'relay'
+                ? '留空则使用 API 主机名'
+                : editing.product !== 'codex'
+                  ? '例如：工作账户'
+                  : '留空则使用邮箱账号'
             }
+            required={editing.product !== 'codex' && editing.accountType !== 'relay'}
           />
         </Field>
         {editing.accountType === 'relay' ? (
@@ -252,6 +295,7 @@ export function ConfirmAccountDialog({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const product = productName(confirm.profile.product);
   return (
     <AppDialog
       title={confirm.kind === 'delete' ? '移除账户档案' : '覆盖当前登录状态'}
@@ -260,10 +304,14 @@ export function ConfirmAccountDialog({
       <div>
         <p className="text-sm leading-6 text-muted-foreground">
           {confirm.kind === 'delete'
-            ? confirm.profile.isActive
-              ? `将移除“${confirm.profile.alias}”的本地认证档案。当前 Codex 登录保持不变，但不再由本应用管理。`
-              : `将移除“${confirm.profile.alias}”的本地认证档案。`
-            : `当前 Codex 登录或 API 配置在应用外被修改。继续会立即切换到“${confirm.profile.alias}”。`}
+            ? confirm.profile.product === 'claude' && confirm.profile.isActive
+              ? confirm.profile.accountType === 'relay'
+                ? `将移除“${confirm.profile.alias}”的本地认证档案，并从 settings.json 清除当前 Claude 中转站凭据。`
+                : `将移除“${confirm.profile.alias}”的本地认证档案，并从 settings.json 清除当前 Claude OAuth Token。Keychain 登录保持不变。`
+              : confirm.profile.isActive
+                ? `将移除“${confirm.profile.alias}”的本地认证档案。当前 ${product} 登录保持不变，但不再由本应用管理。`
+                : `将移除“${confirm.profile.alias}”的本地认证档案。`
+            : `当前 ${product} 登录或 API 配置在应用外被修改。继续会立即切换到“${confirm.profile.alias}”。`}
         </p>
         <DialogFooter>
           <CancelButton />

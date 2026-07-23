@@ -5,6 +5,7 @@ import { invoke, listenOAuthProgress } from '../../backend';
 import { appError } from '../../utils';
 import type {
   AddMode,
+  AccountProduct,
   AppStatus,
   OAuthProgress,
   PendingConfirm,
@@ -12,7 +13,7 @@ import type {
   ResetCredits,
 } from './types';
 
-export function useAccountManager() {
+export function useAccountManager(product: AccountProduct) {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -33,22 +34,26 @@ export function useAccountManager() {
   const [confirm, setConfirm] = useState<PendingConfirm>(null);
   const [resetCreditsProfile, setResetCreditsProfile] = useState<Profile | null>(null);
   const [resetCredits, setResetCredits] = useState<ResetCredits | null>(null);
+  const [quotaProfileId, setQuotaProfileId] = useState<string | null>(null);
+  const refreshRequestRef = useRef(0);
   const oauthCleanupRef = useRef<(() => void) | null>(null);
 
   const refresh = useCallback(async () => {
+    const request = ++refreshRequestRef.current;
     try {
-      setStatus(await invoke<AppStatus>('get_app_status'));
+      const next = await invoke<AppStatus>('get_app_status', { product });
+      if (request === refreshRequestRef.current) setStatus(next);
     } catch (error) {
-      toast.error(appError(error));
+      if (request === refreshRequestRef.current) toast.error(appError(error));
     } finally {
-      setLoading(false);
+      if (request === refreshRequestRef.current) setLoading(false);
     }
-  }, []);
+  }, [product]);
 
   const refreshNewAccount = useCallback(
     async (profile: Profile) => {
       try {
-        if (profile.accountType === 'oauth') {
+        if (profile.accountType === 'oauth' && product !== 'claude') {
           await invoke<Profile>('refresh_profile_usage', { profileId: profile.id });
         }
       } catch (error) {
@@ -56,10 +61,20 @@ export function useAccountManager() {
       }
       await refresh();
     },
-    [refresh],
+    [product, refresh],
   );
 
-  useEffect(() => void refresh(), [refresh]);
+  useEffect(() => {
+    setLoading(true);
+    setStatus(null);
+    setAddOpen(false);
+    setAddMode('browser');
+    setQuotaProfileId(null);
+    void refresh();
+    return () => {
+      refreshRequestRef.current += 1;
+    };
+  }, [refresh]);
 
   const stopOAuthProgress = useCallback(() => {
     oauthCleanupRef.current?.();
@@ -125,9 +140,11 @@ export function useAccountManager() {
   }
 
   async function refreshAllAccounts() {
-    const profiles = (status?.profiles ?? []).filter((profile) => profile.accountType === 'oauth');
+    const profiles = (status?.profiles ?? []).filter(
+      (profile) => profile.accountType === 'oauth' && (product !== 'claude' || profile.isRenewable),
+    );
     if (!profiles.length) {
-      toast.info('中转站账户不支持额度查询。');
+      toast.info(product === 'claude' ? '没有可更新的登录令牌。' : '没有可刷新的账户。');
       return;
     }
     setBusy('refresh:all');
@@ -138,17 +155,26 @@ export function useAccountManager() {
     );
     await refresh();
     const failed = results.filter((result) => result.status === 'rejected');
-    if (failed.length) toast.error(`${failed.length} 个账户信息刷新失败。`);
-    else toast.success('账户信息已刷新。');
+    if (failed.length)
+      toast.error(`${failed.length} 个账户${product === 'claude' ? '令牌更新' : '信息刷新'}失败。`);
+    else toast.success(product === 'claude' ? '登录令牌已更新。' : '账户信息已刷新。');
     setBusy(null);
   }
 
   async function refreshAccount(profile: Profile) {
     if (profile.accountType === 'relay') return;
+    if (product === 'claude' && !profile.isRenewable) {
+      toast.info('此 Token 无法续期，请重新进行浏览器授权。');
+      return;
+    }
     setBusy(`refresh:${profile.id}`);
     try {
       await invoke<Profile>('refresh_profile_usage', { profileId: profile.id });
-      toast.success(`${profile.alias} 的账户信息已刷新。`);
+      toast.success(
+        product === 'claude'
+          ? `${profile.alias} 的登录令牌已更新。`
+          : `${profile.alias} 的账户信息已刷新。`,
+      );
       await refresh();
     } catch (error) {
       toast.error(appError(error));
@@ -189,8 +215,14 @@ export function useAccountManager() {
   async function switchTo(profile: Profile, force = false) {
     setBusy(`switch:${profile.id}`);
     try {
-      await invoke<Profile>('switch_profile', { profileId: profile.id, force });
-      toast.success(`已切换到 ${profile.alias}。`);
+      await invoke<Profile>('switch_profile', { product, profileId: profile.id, force });
+      toast.success(
+        product === 'antigravity'
+          ? `已切换到 ${profile.alias}，新启动的 agy 会话生效。`
+          : product === 'claude'
+            ? `已切换到 ${profile.alias}，新启动的 claude 会话生效。`
+            : `已切换到 ${profile.alias}。`,
+      );
       setConfirm(null);
       await refresh();
     } catch (error) {
@@ -205,7 +237,7 @@ export function useAccountManager() {
   async function importCurrent() {
     setBusy('import');
     try {
-      const profile = await invoke<Profile>('import_current_profile', { alias: null });
+      const profile = await invoke<Profile>('import_current_profile', { product, alias: null });
       toast.success(`已同步 ${profile.alias}。`);
       await refresh();
     } catch (error) {
@@ -217,12 +249,12 @@ export function useAccountManager() {
 
   async function submitAdd(event: FormEvent) {
     event.preventDefault();
-    if (addMode === 'browser') {
+    if (addMode === 'browser' || (product !== 'codex' && product !== 'claude')) {
       setBusy('oauth');
       setOauthMessage('正在准备浏览器授权。');
       try {
         await startOAuthProgress();
-        await invoke('start_oauth_add', { alias: alias || null, activate: false });
+        await invoke('start_oauth_add', { product, alias: alias || null, activate: false });
       } catch (error) {
         stopOAuthProgress();
         setBusy(null);
@@ -245,6 +277,7 @@ export function useAccountManager() {
               apiBaseUrl: relayApiBaseUrl,
               alias: alias || null,
               activate: false,
+              product,
             });
       closeAddDialog();
       toast.success(`已添加 ${profile.alias}。`);
@@ -262,6 +295,11 @@ export function useAccountManager() {
       setEditingAlias(profile.alias);
       setEditingRelayApiKey('');
       setEditingRelayApiBaseUrl(profile.apiBaseUrl ?? '');
+      return;
+    }
+    if (product !== 'codex') {
+      setEditing(profile);
+      setEditingAlias(profile.alias);
       return;
     }
     setBusy(`edit:${profile.id}`);
@@ -289,8 +327,14 @@ export function useAccountManager() {
               alias: editingAlias,
               apiKey: editingRelayApiKey.trim() || null,
               apiBaseUrl: editingRelayApiBaseUrl,
+              product,
             }
-          : { profileId: editing.id, alias: editingAlias, authJson: editingAuthJson },
+          : {
+              product,
+              profileId: editing.id,
+              alias: editingAlias,
+              ...(product === 'codex' ? { authJson: editingAuthJson } : {}),
+            },
       );
       closeEditor();
       toast.success('账户信息已保存。');
@@ -305,7 +349,7 @@ export function useAccountManager() {
   async function deleteProfile(profile: Profile) {
     setBusy(`delete:${profile.id}`);
     try {
-      await invoke('delete_profile', { profileId: profile.id });
+      await invoke('delete_profile', { product, profileId: profile.id });
       setConfirm(null);
       toast.success(`已移除 ${profile.alias}。`);
       await refresh();
@@ -320,7 +364,10 @@ export function useAccountManager() {
     if (!status || profiles === status.profiles) return;
     setStatus({ ...status, profiles });
     try {
-      await invoke('reorder_profiles', { profileIds: profiles.map((profile) => profile.id) });
+      await invoke('reorder_profiles', {
+        product,
+        profileIds: profiles.map((profile) => profile.id),
+      });
     } catch (error) {
       toast.error(appError(error));
       await refresh();
@@ -328,6 +375,7 @@ export function useAccountManager() {
   }
 
   return {
+    product,
     status,
     loading,
     busy,
@@ -348,6 +396,7 @@ export function useAccountManager() {
     confirm,
     resetCreditsProfile,
     resetCredits,
+    quotaProfile: status?.profiles.find((profile) => profile.id === quotaProfileId) ?? null,
     activeProfile,
     setAddOpen,
     setAddMode,
@@ -363,6 +412,7 @@ export function useAccountManager() {
     setShowEditingRelayApiKey,
     setConfirm,
     setResetCreditsProfile,
+    setQuotaProfileId,
     refresh,
     closeAddDialog,
     closeEditor,

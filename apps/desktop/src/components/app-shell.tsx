@@ -1,4 +1,4 @@
-import { Outlet, useRouterState } from '@tanstack/react-router';
+import { Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
 import {
   ChartNoAxesCombined,
   Check,
@@ -12,23 +12,22 @@ import {
   TriangleAlert,
   UsersRound,
 } from 'lucide-react';
-import {
-  createContext,
-  type Dispatch,
-  type ReactNode,
-  type SetStateAction,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import antigravityIcon from '../assets/antigravity.png';
 import chatGptIcon from '../assets/chatgpt.svg';
 import claudeIcon from '../assets/claude.svg';
+import grokIcon from '../assets/grok.svg';
 import { invoke, isTauri } from '../backend';
 import { appError, cn } from '../utils';
 import { AppSidebar, SidebarNavItem } from './app-sidebar';
+import {
+  AppShellContext,
+  type AccountProduct,
+  type MainPath,
+  productName,
+  useAppShell,
+} from './app-shell-context';
 import { Alert, AlertDescription } from './ui/alert';
 import { Button } from './ui/button';
 import {
@@ -39,42 +38,34 @@ import {
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
 
-export type MainPath = '/accounts' | '/sessions' | '/analytics' | '/prompts' | '/config';
-
-type AppShellContextValue = {
-  topPadding: string;
-  previousMainPath: MainPath;
-  codexCliAvailable: boolean | null;
-  setCodexCliAvailable: Dispatch<SetStateAction<boolean | null>>;
-};
-
-const AppShellContext = createContext<AppShellContextValue | null>(null);
-
-export function useAppShell() {
-  const context = useContext(AppShellContext);
-  if (!context) throw new Error('useAppShell must be used within AppShell');
-  return context;
-}
-
 export function AppShell() {
   const isMacOS = isTauri && navigator.userAgent.includes('Mac');
   const topPadding = isMacOS ? 'pt-10' : 'pt-3';
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const previousMainPath = useRef<MainPath>('/accounts');
-  const [codexCliAvailable, setCodexCliAvailable] = useState<boolean | null>(null);
+  const [activeProduct, setActiveProduct] = useState<AccountProduct>('codex');
+  const [cliAvailable, setCliAvailable] = useState<boolean | null>(null);
 
   useEffect(() => {
     const nextPath = mainPathFor(pathname);
-    if (nextPath) previousMainPath.current = nextPath;
-  }, [pathname]);
+    if (activeProduct === 'codex' && nextPath) previousMainPath.current = nextPath;
+  }, [activeProduct, pathname]);
+
+  useEffect(() => {
+    invoke<AccountProduct>('get_active_product')
+      .then(setActiveProduct)
+      .catch((error) => toast.error(appError(error)));
+  }, []);
 
   return (
     <AppShellContext.Provider
       value={{
         topPadding,
         previousMainPath: previousMainPath.current,
-        codexCliAvailable,
-        setCodexCliAvailable,
+        activeProduct,
+        setActiveProduct,
+        cliAvailable,
+        setCliAvailable,
       }}
     >
       <div className="relative flex h-screen min-h-0 bg-background text-foreground">
@@ -86,7 +77,7 @@ export function AppShell() {
 }
 
 export function MainLayout() {
-  const { topPadding, codexCliAvailable } = useAppShell();
+  const { topPadding, activeProduct } = useAppShell();
 
   return (
     <>
@@ -98,13 +89,10 @@ export function MainLayout() {
           <>
             <SidebarNavItem to="/accounts" label="账号" icon={UsersRound} />
             <SidebarNavItem to="/analytics" label="统计分析" icon={ChartNoAxesCombined} />
-            <SidebarNavItem
-              to="/sessions"
-              label="会话管理"
-              icon={MessagesSquare}
-              disabled={codexCliAvailable === false}
-            />
-            <SidebarNavItem to="/prompts" label="提示词管理" icon={FileText} />
+            <SidebarNavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
+            {activeProduct === 'codex' && (
+              <SidebarNavItem to="/prompts" label="提示词管理" icon={FileText} />
+            )}
             <SidebarNavItem to="/config" label="配置" icon={FileCog} />
           </>
         }
@@ -118,17 +106,48 @@ export function MainLayout() {
 }
 
 export function AppContent({ children }: { children: ReactNode }) {
-  const { topPadding, codexCliAvailable, setCodexCliAvailable } = useAppShell();
+  const { topPadding, activeProduct, cliAvailable, setCliAvailable } = useAppShell();
 
   return (
     <div className={cn('flex min-w-0 flex-1 flex-col', topPadding)}>
-      <CodexCliAlert available={codexCliAvailable} onAvailableChange={setCodexCliAvailable} />
+      <CliAlert
+        key={activeProduct}
+        product={activeProduct}
+        available={cliAvailable}
+        onAvailableChange={setCliAvailable}
+      />
       <div className="min-h-0 flex-1">{children}</div>
     </div>
   );
 }
 
 function ProductMenu() {
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const { activeProduct, setActiveProduct, previousMainPath, setCliAvailable } = useAppShell();
+  const claude = activeProduct === 'claude';
+  const antigravity = activeProduct === 'antigravity';
+  const grok = activeProduct === 'grok';
+
+  async function selectProduct(product: AccountProduct) {
+    if (product === activeProduct) return;
+    try {
+      await invoke('set_active_product', { product });
+      setActiveProduct(product);
+      setCliAvailable(null);
+      await navigate({
+        to:
+          pathname === '/sessions' || pathname === '/analytics'
+            ? pathname
+            : product === 'codex'
+              ? previousMainPath
+              : '/accounts',
+      });
+    } catch (error) {
+      toast.error(appError(error));
+    }
+  }
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -139,20 +158,37 @@ function ProductMenu() {
           />
         }
       >
-        <img src={chatGptIcon} alt="" className="size-5 shrink-0" />
-        <strong className="truncate text-base font-semibold">Codex</strong>
+        <img
+          src={claude ? claudeIcon : antigravity ? antigravityIcon : grok ? grokIcon : chatGptIcon}
+          alt=""
+          className="size-5 shrink-0"
+        />
+        <strong className="truncate text-base font-semibold">
+          {claude ? 'Claude' : antigravity ? 'Antigravity' : grok ? 'Grok' : 'Codex'}
+        </strong>
         <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent sideOffset={4}>
         <DropdownMenuGroup>
-          <DropdownMenuItem>
+          <DropdownMenuItem onClick={() => void selectProduct('codex')}>
             <img src={chatGptIcon} alt="" className="size-4" />
             Codex
-            <Check className="ml-auto" />
+            {activeProduct === 'codex' && <Check className="ml-auto" />}
           </DropdownMenuItem>
-          <DropdownMenuItem disabled>
+          <DropdownMenuItem onClick={() => void selectProduct('claude')}>
             <img src={claudeIcon} alt="" className="size-4" />
             Claude
+            {claude && <Check className="ml-auto" />}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => void selectProduct('antigravity')}>
+            <img src={antigravityIcon} alt="" className="size-4" />
+            Antigravity
+            {antigravity && <Check className="ml-auto" />}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => void selectProduct('grok')}>
+            <img src={grokIcon} alt="" className="size-4" />
+            Grok
+            {grok && <Check className="ml-auto" />}
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>
@@ -160,10 +196,12 @@ function ProductMenu() {
   );
 }
 
-function CodexCliAlert({
+function CliAlert({
+  product,
   available,
   onAvailableChange,
 }: {
+  product: AccountProduct;
   available: boolean | null;
   onAvailableChange: (available: boolean) => void;
 }) {
@@ -174,7 +212,7 @@ function CodexCliAlert({
       setChecking(true);
       try {
         const [isAvailable] = await Promise.all([
-          invoke<boolean>('is_codex_cli_available'),
+          invoke<boolean>(`is_${product}_cli_available`),
           new Promise((resolve) => setTimeout(resolve, minimumDuration)),
         ]);
         onAvailableChange(isAvailable);
@@ -184,7 +222,7 @@ function CodexCliAlert({
         setChecking(false);
       }
     },
-    [onAvailableChange],
+    [onAvailableChange, product],
   );
 
   useEffect(() => {
@@ -193,7 +231,7 @@ function CodexCliAlert({
 
   async function openInstallPage() {
     try {
-      await invoke('open_codex_cli_install_page');
+      await invoke(`open_${product}_cli_install_page`);
     } catch (error) {
       toast.error(appError(error));
     }
@@ -206,7 +244,7 @@ function CodexCliAlert({
       <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-2">
           <TriangleAlert className="size-4 shrink-0" />
-          <span>未检测到 Codex CLI，部分功能将不可用。</span>
+          <span>未检测到 {productName(product)} CLI，部分功能将不可用。</span>
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <Button
@@ -221,7 +259,7 @@ function CodexCliAlert({
           </Button>
           <Button variant="link" size="sm" onClick={() => void openInstallPage()}>
             <ExternalLink data-icon="inline-start" />
-            安装 Codex CLI
+            安装 {productName(product)} CLI
           </Button>
         </span>
       </AlertDescription>

@@ -156,23 +156,35 @@ async fn dispatch_command(
         };
     }
     match command {
-        "get_app_status" => result!(accounts::get_app_status(app.clone(), app.state()).await),
-        "switch_profile" => result!(accounts::switch_profile(
-            app.clone(),
-            app.state(),
-            arg(&args, "profileId")?,
-            arg(&args, "force")?
-        )),
+        "get_app_status" => result!(
+            accounts::get_app_status(app.clone(), app.state(), optional(&args, "product")?).await
+        ),
+        "switch_profile" => result!(
+            accounts::switch_profile(
+                app.clone(),
+                app.state(),
+                arg(&args, "profileId")?,
+                arg(&args, "force")?,
+                optional(&args, "product")?
+            )
+            .await
+        ),
         "start_oauth_add" => result!(oauth::start_oauth_add(
             app.clone(),
             app.state(),
             optional(&args, "alias")?,
-            arg(&args, "activate")?
+            arg(&args, "activate")?,
+            optional(&args, "product")?
         )),
         "cancel_oauth_add" => result!(oauth::cancel_oauth_add(app.clone(), app.state())),
         "import_current_profile" => result!(
-            accounts::import_current_profile(app.clone(), app.state(), optional(&args, "alias")?)
-                .await
+            accounts::import_current_profile(
+                app.clone(),
+                app.state(),
+                optional(&args, "alias")?,
+                optional(&args, "product")?
+            )
+            .await
         ),
         "import_auth_json" => result!(
             oauth::import_auth_json(
@@ -190,7 +202,8 @@ async fn dispatch_command(
             arg(&args, "apiKey")?,
             arg(&args, "apiBaseUrl")?,
             optional(&args, "alias")?,
-            arg(&args, "activate")?
+            arg(&args, "activate")?,
+            optional(&args, "product")?
         )),
         "refresh_profile_usage" => {
             result!(accounts::refresh_profile_usage(app.state(), arg(&args, "profileId")?).await)
@@ -207,7 +220,8 @@ async fn dispatch_command(
             app.state(),
             arg(&args, "profileId")?,
             arg(&args, "alias")?,
-            arg(&args, "authJson")?
+            optional(&args, "authJson")?,
+            optional(&args, "product")?
         )),
         "update_relay_profile" => result!(accounts::update_relay_profile(
             app.clone(),
@@ -215,17 +229,26 @@ async fn dispatch_command(
             arg(&args, "profileId")?,
             arg(&args, "alias")?,
             optional(&args, "apiKey")?,
-            arg(&args, "apiBaseUrl")?
+            arg(&args, "apiBaseUrl")?,
+            optional(&args, "product")?
         )),
         "reorder_profiles" => result!(accounts::reorder_profiles(
             app.clone(),
             app.state(),
-            arg(&args, "profileIds")?
+            arg(&args, "profileIds")?,
+            optional(&args, "product")?
         )),
         "delete_profile" => result!(accounts::delete_profile(
             app.clone(),
             app.state(),
-            arg(&args, "profileId")?
+            arg(&args, "profileId")?,
+            optional(&args, "product")?
+        )),
+        "get_active_product" => result!(accounts::get_active_product(app.state())),
+        "set_active_product" => result!(accounts::set_active_product(
+            app.clone(),
+            app.state(),
+            arg(&args, "product")?
         )),
         "set_codex_home" => result!(accounts::set_codex_home(
             app.clone(),
@@ -279,10 +302,47 @@ async fn dispatch_command(
             app.state(),
             arg(&args, "content")?
         )),
+        "get_claude_config" => result!(claude::get_claude_config(app.state())),
+        "validate_claude_config" => result!(Ok::<_, String>(claude::validate_claude_config(arg(
+            &args, "content"
+        )?))),
+        "format_claude_config" => result!(claude::format_claude_config(arg(&args, "content")?)),
+        "save_claude_config" => result!(claude::save_claude_config(
+            app.state(),
+            arg(&args, "content")?
+        )),
+        "get_antigravity_config" => result!(antigravity::get_antigravity_config(app.state())),
+        "validate_antigravity_config" => result!(Ok::<_, String>(
+            antigravity::validate_antigravity_config(arg(&args, "content")?)
+        )),
+        "format_antigravity_config" => result!(antigravity::format_antigravity_config(arg(
+            &args, "content"
+        )?)),
+        "save_antigravity_config" => result!(antigravity::save_antigravity_config(
+            app.state(),
+            arg(&args, "content")?
+        )),
+        "get_grok_config" => result!(grok::get_grok_config(app.state())),
+        "validate_grok_config" => result!(Ok::<_, String>(grok::validate_grok_config(arg(
+            &args, "content"
+        )?))),
+        "format_grok_config" => result!(grok::format_grok_config(arg(&args, "content")?)),
+        "save_grok_config" => result!(grok::save_grok_config(app.state(), arg(&args, "content")?)),
         "is_codex_cli_available" => result!(env::is_codex_cli_available(app.state()).await),
+        "is_claude_cli_available" => result!(env::is_claude_cli_available(app.state()).await),
+        "is_antigravity_cli_available" => {
+            result!(env::is_antigravity_cli_available(app.state()).await)
+        }
+        "is_grok_cli_available" => result!(env::is_grok_cli_available(app.state()).await),
         "get_codex_cli_environment" => result!(env::get_codex_cli_environment(app.state()).await),
         "get_claude_cli_environment" => {
             result!(env::get_claude_cli_environment(app.state()).await)
+        }
+        "get_antigravity_cli_environment" => {
+            result!(env::get_antigravity_cli_environment(app.state()).await)
+        }
+        "get_grok_cli_environment" => {
+            result!(env::get_grok_cli_environment(app.state()).await)
         }
         "list_codex_sessions" => result!(
             sessions::list_codex_sessions(
@@ -325,6 +385,13 @@ async fn dispatch_command(
         "open_codex_cli_install_page" => {
             result!(super::open_codex_cli_install_page(app.clone()))
         }
+        "open_claude_cli_install_page" => {
+            result!(super::open_claude_cli_install_page(app.clone()))
+        }
+        "open_antigravity_cli_install_page" => {
+            result!(super::open_antigravity_cli_install_page(app.clone()))
+        }
+        "open_grok_cli_install_page" => result!(super::open_grok_cli_install_page(app.clone())),
         "open_web_access" => result!(open_web_access(app.clone())),
         "set_web_access_settings" => result!(set_web_access_settings(
             app.clone(),
