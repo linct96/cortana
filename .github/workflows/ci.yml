@@ -17,7 +17,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @cortana/desktop exec oxfmt --check .
-      - run: pnpm --filter @cortana/desktop check:component-size
+      - run: pnpm --filter @cortana/desktop exec oxlint src
+      - run: pnpm --filter @cortana/desktop exec vitest run
       - run: pnpm --filter @cortana/desktop build:web
 
   desktop:
@@ -35,10 +36,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.93.0
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - if: matrix.os == 'macos-14'
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - if: matrix.os == 'macos-14'
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}

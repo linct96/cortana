@@ -30,6 +30,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.93.0
         with:
           targets: ${{ matrix.targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.targets }}
       - run: pnpm install --frozen-lockfile
       - uses: tauri-apps/tauri-action@v1
         env:

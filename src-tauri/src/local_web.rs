@@ -477,7 +477,7 @@ pub(super) fn set_web_access_settings(
     let old_runtime = {
         let mut runtime = bridge.runtime.lock().map_err(lock_error)?;
         if enabled {
-            next_runtime.map(|next| runtime.replace(next)).flatten()
+            next_runtime.and_then(|next| runtime.replace(next))
         } else {
             runtime.take()
         }
