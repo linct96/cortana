@@ -1,26 +1,45 @@
-use super::{codex::*, db::*, oauth::identity_from_auth_json, tray::*, *};
+use super::{
+    antigravity, claude, codex::*, db::*, grok, oauth::identity_from_auth_json, tray::*, *,
+};
 
 #[tauri::command]
 pub(super) async fn get_app_status(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    product: Option<AccountProduct>,
 ) -> Result<AppStatus, String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || app_status(&app, &state))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || match product.unwrap_or_default() {
+        AccountProduct::Codex => app_status(&app, &state),
+        AccountProduct::Claude => claude::app_status(&app, &state),
+        AccountProduct::Antigravity => antigravity::app_status(&app, &state),
+        AccountProduct::Grok => grok::app_status(&app, &state),
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(super) fn switch_profile(
+pub(super) async fn switch_profile(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     profile_id: String,
     force: bool,
+    product: Option<AccountProduct>,
 ) -> Result<ProfileSummary, String> {
-    let profile = switch_profile_internal(&state, &profile_id, force)?;
-    refresh_tray(&app)?;
-    Ok(profile)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let profile = match product.unwrap_or_default() {
+            AccountProduct::Codex => switch_profile_internal(&state, &profile_id, force)?,
+            AccountProduct::Claude => claude::switch_profile(&state, &profile_id, force)?,
+            AccountProduct::Antigravity => antigravity::switch_profile(&state, &profile_id, force)?,
+            AccountProduct::Grok => grok::switch_profile(&state, &profile_id, force)?,
+        };
+        refresh_tray(&app)?;
+        Ok(profile)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -28,9 +47,21 @@ pub(super) async fn import_current_profile(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     alias: Option<String>,
+    product: Option<AccountProduct>,
 ) -> Result<ProfileSummary, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let product = product.unwrap_or_default();
+        if product != AccountProduct::Codex {
+            let profile = match product {
+                AccountProduct::Claude => claude::import_current_profile(&state, alias)?,
+                AccountProduct::Antigravity => antigravity::import_current_profile(&state, alias)?,
+                AccountProduct::Grok => grok::import_current_profile(&state, alias)?,
+                AccountProduct::Codex => unreachable!(),
+            };
+            refresh_tray(&app)?;
+            return Ok(profile);
+        }
         let auth_path = auth_path(&state)?;
         let auth_json = read_auth_json(&auth_path)?
             .ok_or_else(|| "未找到 Codex 的 auth.json，无法导入。".to_string())?;
@@ -71,15 +102,33 @@ pub(super) fn add_relay_profile(
     api_base_url: String,
     alias: Option<String>,
     activate: bool,
+    product: Option<AccountProduct>,
 ) -> Result<ProfileSummary, String> {
-    let profile = upsert_relay_profile(
-        &state,
-        &api_key,
-        &api_base_url,
-        alias.unwrap_or_default().trim(),
-    )?;
+    let product = product.unwrap_or_default();
+    let profile = match product {
+        AccountProduct::Codex => upsert_relay_profile(
+            &state,
+            &api_key,
+            &api_base_url,
+            alias.unwrap_or_default().trim(),
+        )?,
+        AccountProduct::Claude => claude::upsert_relay_profile(
+            &state,
+            &api_key,
+            &api_base_url,
+            alias.unwrap_or_default().trim(),
+            "manual",
+        )?,
+        AccountProduct::Antigravity | AccountProduct::Grok => {
+            return Err("该产品暂不支持中转站账户。".to_string());
+        }
+    };
     let profile = if activate {
-        switch_profile_internal(&state, &profile.id, true)?
+        match product {
+            AccountProduct::Codex => switch_profile_internal(&state, &profile.id, true)?,
+            AccountProduct::Claude => claude::switch_profile(&state, &profile.id, true)?,
+            AccountProduct::Antigravity | AccountProduct::Grok => unreachable!(),
+        }
     } else {
         profile
     };
@@ -94,7 +143,23 @@ pub(super) async fn refresh_profile_usage(
 ) -> Result<ProfileSummary, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        refresh_profile_usage_internal(&state, &profile_id)
+        let connection = open_database(&state)?;
+        let product = connection
+            .query_row(
+                "SELECT product FROM accounts WHERE id = ?1",
+                params![profile_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(database_error)?
+            .ok_or_else(|| "账户不存在。".to_string())?;
+        match product.as_str() {
+            "codex" => refresh_profile_usage_internal(&state, &profile_id),
+            "claude" => claude::refresh_profile_usage(&state, &profile_id),
+            "antigravity" => antigravity::refresh_profile_usage(&state, &profile_id),
+            "grok" => grok::refresh_profile_usage(&state, &profile_id),
+            _ => Err("不支持该账户类型。".to_string()),
+        }
     })
     .await
     .map_err(|error| error.to_string())?
@@ -110,7 +175,7 @@ pub(super) async fn get_profile_reset_credits(
         let connection = open_database(&state)?;
         let (account_type, account_id, auth_json) = connection
             .query_row(
-                "SELECT account_type, account_id, auth_json FROM accounts WHERE id = ?1",
+                "SELECT account_type, account_id, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
                 params![profile_id],
                 |row| {
                     Ok((
@@ -129,7 +194,7 @@ pub(super) async fn get_profile_reset_credits(
         let credits = fetch_reset_credits(&auth_json, &account_id)?;
         connection
             .execute(
-                "UPDATE accounts SET reset_credits_available_count = ?1 WHERE id = ?2",
+                "UPDATE accounts SET reset_credits_available_count = ?1 WHERE id = ?2 AND product = 'codex'",
                 params![credits.available_count, profile_id],
             )
             .map_err(database_error)?;
@@ -154,7 +219,7 @@ pub(super) fn get_profile_auth_json(
 ) -> Result<String, String> {
     let profile = connection
         .query_row(
-            "SELECT account_type, auth_json FROM accounts WHERE id = ?1",
+            "SELECT account_type, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
             params![profile_id],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
@@ -173,9 +238,22 @@ pub(super) fn update_profile(
     state: State<'_, AppState>,
     profile_id: String,
     alias: String,
-    auth_json: String,
+    auth_json: Option<String>,
+    product: Option<AccountProduct>,
 ) -> Result<ProfileSummary, String> {
-    let profile = update_profile_internal(&state, &profile_id, &alias, &auth_json)?;
+    let profile = match product.unwrap_or_default() {
+        AccountProduct::Codex => update_profile_internal(
+            &state,
+            &profile_id,
+            &alias,
+            auth_json
+                .as_deref()
+                .ok_or_else(|| "缺少 auth.json。".to_string())?,
+        )?,
+        AccountProduct::Claude => claude::update_alias(&state, &profile_id, &alias)?,
+        AccountProduct::Antigravity => antigravity::update_alias(&state, &profile_id, &alias)?,
+        AccountProduct::Grok => grok::update_alias(&state, &profile_id, &alias)?,
+    };
     refresh_tray(&app)?;
     Ok(profile)
 }
@@ -188,14 +266,27 @@ pub(super) fn update_relay_profile(
     alias: String,
     api_key: Option<String>,
     api_base_url: String,
+    product: Option<AccountProduct>,
 ) -> Result<ProfileSummary, String> {
-    let profile = update_relay_profile_internal(
-        &state,
-        &profile_id,
-        &alias,
-        api_key.as_deref(),
-        &api_base_url,
-    )?;
+    let profile = match product.unwrap_or_default() {
+        AccountProduct::Codex => update_relay_profile_internal(
+            &state,
+            &profile_id,
+            &alias,
+            api_key.as_deref(),
+            &api_base_url,
+        )?,
+        AccountProduct::Claude => claude::update_relay_profile(
+            &state,
+            &profile_id,
+            &alias,
+            api_key.as_deref(),
+            &api_base_url,
+        )?,
+        AccountProduct::Antigravity | AccountProduct::Grok => {
+            return Err("该产品暂不支持中转站账户。".to_string());
+        }
+    };
     refresh_tray(&app)?;
     Ok(profile)
 }
@@ -205,9 +296,11 @@ pub(super) fn reorder_profiles(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     profile_ids: Vec<String>,
+    product: Option<AccountProduct>,
 ) -> Result<(), String> {
+    let product = product.unwrap_or_default();
     let mut connection = open_database(&state)?;
-    let mut existing_ids = list_profiles(&connection, None)?
+    let mut existing_ids = list_profiles_for_product(&connection, product, None)?
         .into_iter()
         .map(|profile| profile.id)
         .collect::<Vec<_>>();
@@ -221,8 +314,8 @@ pub(super) fn reorder_profiles(
     for (sort_order, profile_id) in profile_ids.iter().enumerate() {
         transaction
             .execute(
-                "UPDATE accounts SET sort_order = ?1 WHERE id = ?2",
-                params![sort_order, profile_id],
+                "UPDATE accounts SET sort_order = ?1 WHERE id = ?2 AND product = ?3",
+                params![sort_order, profile_id, product.as_str()],
             )
             .map_err(database_error)?;
     }
@@ -235,14 +328,37 @@ pub(super) fn delete_profile(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     profile_id: String,
+    product: Option<AccountProduct>,
 ) -> Result<(), String> {
+    let product = product.unwrap_or_default();
     let connection = open_database(&state)?;
-    let changed = connection
-        .execute("DELETE FROM accounts WHERE id = ?1", params![profile_id])
+    let exists = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM accounts WHERE id = ?1 AND product = ?2)",
+            params![profile_id, product.as_str()],
+            |row| row.get::<_, bool>(0),
+        )
         .map_err(database_error)?;
-    if changed == 0 {
+    drop(connection);
+    if !exists {
         return Err("账户不存在。".to_string());
     }
+    if product == AccountProduct::Claude {
+        claude::clear_active_profile(&state, &profile_id)?;
+    }
+    let mut connection = open_database(&state)?;
+    let transaction = connection.transaction().map_err(database_error)?;
+    let changed = transaction
+        .execute(
+            "DELETE FROM accounts WHERE id = ?1 AND product = ?2",
+            params![profile_id, product.as_str()],
+        )
+        .map_err(database_error)?;
+    debug_assert_eq!(changed, 1);
+    if product == AccountProduct::Antigravity {
+        antigravity::clear_active_profile(&transaction, &profile_id)?;
+    }
+    transaction.commit().map_err(database_error)?;
     refresh_tray(&app)
 }
 
@@ -257,6 +373,28 @@ pub(super) fn set_codex_home(
     set_setting(&connection, "codex_home", trimmed)?;
     refresh_tray(&app)?;
     app_status(&app, &state)
+}
+
+pub(super) fn get_active_product(state: State<'_, AppState>) -> Result<AccountProduct, String> {
+    let connection = open_database(&state)?;
+    Ok(
+        match get_setting(&connection, "active_product")?.as_deref() {
+            Some("claude") => AccountProduct::Claude,
+            Some("antigravity") => AccountProduct::Antigravity,
+            Some("grok") => AccountProduct::Grok,
+            _ => AccountProduct::Codex,
+        },
+    )
+}
+
+pub(super) fn set_active_product(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    product: AccountProduct,
+) -> Result<(), String> {
+    let connection = open_database(&state)?;
+    set_setting(&connection, "active_product", product.as_str())?;
+    refresh_tray(&app)
 }
 
 pub(super) fn app_status(app: &tauri::AppHandle, state: &AppState) -> Result<AppStatus, String> {
@@ -290,11 +428,21 @@ pub(super) fn list_profiles(
     connection: &Connection,
     active_id: Option<&str>,
 ) -> Result<Vec<ProfileSummary>, String> {
+    list_profiles_for_product(connection, AccountProduct::Codex, active_id)
+}
+
+pub(super) fn list_profiles_for_product(
+    connection: &Connection,
+    product: AccountProduct,
+    active_id: Option<&str>,
+) -> Result<Vec<ProfileSummary>, String> {
     let mut statement = connection
-        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count FROM accounts ORDER BY sort_order ASC, created_at ASC")
+        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json FROM accounts WHERE product = ?1 ORDER BY sort_order ASC, created_at ASC")
         .map_err(database_error)?;
     let rows = statement
-        .query_map([], |row| profile_summary_from_row(row, active_id))
+        .query_map(params![product.as_str()], |row| {
+            profile_summary_from_row(row, product, active_id)
+        })
         .map_err(database_error)?;
     let profiles = rows
         .collect::<Result<Vec<_>, _>>()
@@ -304,6 +452,7 @@ pub(super) fn list_profiles(
 
 pub(super) fn profile_summary_from_row(
     row: &rusqlite::Row<'_>,
+    product: AccountProduct,
     active_id: Option<&str>,
 ) -> rusqlite::Result<ProfileSummary> {
     let id: String = row.get(0)?;
@@ -313,9 +462,20 @@ pub(super) fn profile_summary_from_row(
     let secondary_percent: Option<f64> = row.get(10)?;
     let secondary_window_minutes: Option<i64> = row.get(11)?;
     let secondary_resets_at: Option<i64> = row.get(12)?;
+    let antigravity_quota = row
+        .get::<_, Option<String>>(17)?
+        .and_then(|value| serde_json::from_str(&value).ok());
+    let is_renewable = if product == AccountProduct::Claude {
+        row.get::<_, String>(18)
+            .ok()
+            .is_some_and(|auth_json| claude::credential_is_renewable(&auth_json))
+    } else {
+        true
+    };
     Ok(ProfileSummary {
         is_active: active_id == Some(id.as_str()),
         id,
+        product,
         account_type: row.get(1)?,
         api_base_url: row.get(2)?,
         account_id: row.get(3)?,
@@ -332,8 +492,10 @@ pub(super) fn profile_summary_from_row(
             window_minutes: secondary_window_minutes,
             resets_at: secondary_resets_at,
         }),
+        antigravity_quota,
         usage_updated_at: row.get(13)?,
         reset_credits_available_count: row.get(16)?,
+        is_renewable,
         last_used_at: row.get(14)?,
         updated_at: row.get(15)?,
     })
@@ -344,11 +506,20 @@ pub(super) fn get_profile_summary(
     profile_id: &str,
     active_id: Option<&str>,
 ) -> Result<ProfileSummary, String> {
+    get_profile_summary_for_product(connection, AccountProduct::Codex, profile_id, active_id)
+}
+
+pub(super) fn get_profile_summary_for_product(
+    connection: &Connection,
+    product: AccountProduct,
+    profile_id: &str,
+    active_id: Option<&str>,
+) -> Result<ProfileSummary, String> {
     connection
         .query_row(
-            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count FROM accounts WHERE id = ?1",
-            params![profile_id],
-            |row| profile_summary_from_row(row, active_id),
+            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json FROM accounts WHERE id = ?1 AND product = ?2",
+            params![profile_id, product.as_str()],
+            |row| profile_summary_from_row(row, product, active_id),
         )
         .optional()
         .map_err(database_error)?
@@ -378,6 +549,7 @@ pub(super) fn detected_profile_from_auth(
         let now = now_millis();
         return Ok(Some(ProfileSummary {
             id: "detected".to_string(),
+            product: AccountProduct::Codex,
             account_type: ACCOUNT_TYPE_RELAY.to_string(),
             api_base_url,
             account_id: String::new(),
@@ -386,8 +558,10 @@ pub(super) fn detected_profile_from_auth(
             plan_type: String::new(),
             usage_primary: None,
             usage_secondary: None,
+            antigravity_quota: None,
             usage_updated_at: None,
             reset_credits_available_count: None,
+            is_renewable: true,
             is_active: true,
             last_used_at: None,
             updated_at: now,
@@ -397,9 +571,10 @@ pub(super) fn detected_profile_from_auth(
 
     let now = now_millis();
     let usage = fetch_account_usage(auth_json, &identity.account_id).ok();
-    let alias = identity.email.clone();
+    let alias = oauth_alias("", &identity);
     Ok(Some(ProfileSummary {
         id: "detected".to_string(),
+        product: AccountProduct::Codex,
         account_type: ACCOUNT_TYPE_OAUTH.to_string(),
         api_base_url: None,
         account_id: identity.account_id,
@@ -412,8 +587,10 @@ pub(super) fn detected_profile_from_auth(
             .unwrap_or(identity.plan_type),
         usage_primary: usage.as_ref().and_then(|usage| usage.primary.clone()),
         usage_secondary: usage.as_ref().and_then(|usage| usage.secondary.clone()),
+        antigravity_quota: None,
         usage_updated_at: usage.map(|_| now),
         reset_credits_available_count: None,
+        is_renewable: true,
         is_active: true,
         last_used_at: None,
         updated_at: now,
@@ -433,7 +610,7 @@ pub(super) fn profile_id_for_auth(
         };
         return connection
             .query_row(
-                "SELECT id FROM accounts WHERE account_type = 'relay' AND api_base_url = ?1 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?2 LIMIT 1",
+                "SELECT id FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND api_base_url = ?1 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?2 LIMIT 1",
                 params![api_base_url, api_key],
                 |row| row.get(0),
             )
@@ -445,7 +622,7 @@ pub(super) fn profile_id_for_auth(
     };
     connection
         .query_row(
-            "SELECT id FROM accounts WHERE account_type = 'oauth' AND trim(COALESCE(json_extract(auth_json, '$.tokens.refresh_token'), '')) = ?1 LIMIT 1",
+            "SELECT id FROM accounts WHERE product = 'codex' AND account_type = 'oauth' AND trim(COALESCE(json_extract(auth_json, '$.tokens.refresh_token'), '')) = ?1 LIMIT 1",
             params![refresh_token],
             |row| row.get(0),
         )
@@ -471,7 +648,7 @@ pub(super) fn resolve_auth_state(
     if let Some(profile_id) = profile_id.as_deref() {
         connection
             .execute(
-                "UPDATE accounts SET auth_json = ?1, updated_at = ?2 WHERE id = ?3 AND account_type = 'oauth' AND auth_json <> ?1",
+                "UPDATE accounts SET auth_json = ?1, updated_at = ?2 WHERE id = ?3 AND product = 'codex' AND account_type = 'oauth' AND auth_json <> ?1",
                 params![auth_json, now_millis(), profile_id],
             )
             .map_err(database_error)?;
@@ -508,7 +685,7 @@ pub(super) fn switch_profile_internal(
     }
     let row = connection
         .query_row(
-            "SELECT id, account_type, api_base_url, auth_json FROM accounts WHERE id = ?1",
+            "SELECT id, account_type, api_base_url, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
             params![profile_id],
             |row| {
                 Ok((
@@ -528,7 +705,7 @@ pub(super) fn switch_profile_internal(
         let transaction = connection.transaction().map_err(database_error)?;
         transaction
             .execute(
-                "UPDATE accounts SET last_used_at = ?1, updated_at = ?1 WHERE id = ?2",
+                "UPDATE accounts SET last_used_at = ?1, updated_at = ?1 WHERE id = ?2 AND product = 'codex'",
                 params![now, row.0],
             )
             .map_err(database_error)?;
@@ -562,7 +739,7 @@ pub(super) fn update_profile_internal(
     let mut connection = open_database(state)?;
     let (existing_email, account_type) = connection
         .query_row(
-            "SELECT email, account_type FROM accounts WHERE id = ?1",
+            "SELECT email, account_type FROM accounts WHERE id = ?1 AND product = 'codex'",
             params![profile_id],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
@@ -575,11 +752,7 @@ pub(super) fn update_profile_internal(
     if identity.email.is_empty() {
         identity.email = existing_email;
     }
-    let alias = match requested_alias.trim() {
-        "" if identity.email.is_empty() => "导入的账户".to_string(),
-        "" => identity.email.clone(),
-        alias => alias.to_string(),
-    };
+    let alias = oauth_alias(requested_alias, &identity);
     let auth_path = auth_path(state)?;
     let (_, active_id) = resolve_auth_state(&connection, &auth_path)?;
     let active = active_id.as_deref() == Some(profile_id);
@@ -590,7 +763,7 @@ pub(super) fn update_profile_internal(
         let transaction = connection.transaction().map_err(database_error)?;
         let changed = transaction
             .execute(
-                "UPDATE accounts SET account_id = ?1, email = ?2, alias = ?3, plan_type = CASE WHEN ?4 = '' THEN plan_type ELSE ?4 END, auth_json = ?5, updated_at = ?6 WHERE id = ?7",
+                "UPDATE accounts SET account_id = ?1, email = ?2, alias = ?3, plan_type = CASE WHEN ?4 = '' THEN plan_type ELSE ?4 END, auth_json = ?5, updated_at = ?6 WHERE id = ?7 AND product = 'codex'",
                 params![identity.account_id, identity.email, alias, identity.plan_type, formatted_auth_json, now_millis(), profile_id],
             )
             .map_err(database_error)?;
@@ -624,40 +797,36 @@ pub(super) fn upsert_profile_from_auth(
     let connection = open_database(state)?;
     let existing = connection
         .query_row(
-            "SELECT id, alias FROM accounts WHERE account_type = 'oauth' AND trim(COALESCE(json_extract(auth_json, '$.tokens.refresh_token'), '')) = ?1 LIMIT 1",
+            "SELECT id, alias, email FROM accounts WHERE product = 'codex' AND account_type = 'oauth' AND trim(COALESCE(json_extract(auth_json, '$.tokens.refresh_token'), '')) = ?1 LIMIT 1",
             params![refresh_token],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
         )
         .optional()
         .map_err(database_error)?;
     let now = now_millis();
-    let id = if let Some((id, existing_alias)) = existing {
+    let id = if let Some((id, existing_alias, existing_email)) = existing {
         let alias = if requested_alias.is_empty() {
-            existing_alias
+            if existing_alias.trim().is_empty() || existing_alias == existing_email {
+                oauth_alias("", &identity)
+            } else {
+                existing_alias
+            }
         } else {
-            requested_alias.to_string()
+            requested_alias.trim().to_string()
         };
         connection
             .execute(
-                "UPDATE accounts SET account_type = 'oauth', api_base_url = NULL, account_id = ?1, email = ?2, alias = ?3, plan_type = CASE WHEN ?4 = '' THEN plan_type ELSE ?4 END, auth_json = ?5, updated_at = ?6 WHERE id = ?7",
+                "UPDATE accounts SET account_type = 'oauth', api_base_url = NULL, account_id = ?1, email = ?2, alias = ?3, plan_type = CASE WHEN ?4 = '' THEN plan_type ELSE ?4 END, auth_json = ?5, updated_at = ?6 WHERE id = ?7 AND product = 'codex'",
                 params![identity.account_id, identity.email, alias, identity.plan_type, auth_json, now, id],
             )
             .map_err(database_error)?;
         id
     } else {
         let id = Uuid::new_v4().to_string();
-        let alias = if requested_alias.is_empty() {
-            if identity.email.is_empty() {
-                "导入的账户".to_string()
-            } else {
-                identity.email.clone()
-            }
-        } else {
-            requested_alias.to_string()
-        };
+        let alias = oauth_alias(requested_alias, &identity);
         connection
             .execute(
-                "INSERT INTO accounts (id, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'oauth', NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?7, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts), 0))",
+                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'codex', 'oauth', NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?7, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'codex'), 0))",
                 params![id, identity.account_id, identity.email, alias, identity.plan_type, auth_json, now],
             )
             .map_err(database_error)?;
@@ -665,6 +834,15 @@ pub(super) fn upsert_profile_from_auth(
     };
     let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
     get_profile_summary(&connection, &id, active_id.as_deref())
+}
+
+pub(super) fn oauth_alias(requested_alias: &str, identity: &Identity) -> String {
+    [requested_alias, &identity.name, &identity.email]
+        .into_iter()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .unwrap_or("导入的账户")
+        .to_string()
 }
 
 pub(super) fn upsert_relay_profile(
@@ -678,7 +856,7 @@ pub(super) fn upsert_relay_profile(
     let connection = open_database(state)?;
     let existing = connection
         .query_row(
-            "SELECT id, alias FROM accounts WHERE account_type = 'relay' AND api_base_url = ?1 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?2 LIMIT 1",
+            "SELECT id, alias FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND api_base_url = ?1 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?2 LIMIT 1",
             params![api_base_url, api_key.trim()],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
@@ -693,7 +871,7 @@ pub(super) fn upsert_relay_profile(
         };
         connection
             .execute(
-                "UPDATE accounts SET alias = ?1, auth_json = ?2, api_base_url = ?3, updated_at = ?4 WHERE id = ?5",
+                "UPDATE accounts SET alias = ?1, auth_json = ?2, api_base_url = ?3, updated_at = ?4 WHERE id = ?5 AND product = 'codex'",
                 params![alias, auth_json, api_base_url, now, id],
             )
             .map_err(database_error)?;
@@ -703,7 +881,7 @@ pub(super) fn upsert_relay_profile(
         let alias = relay_alias(requested_alias, &api_base_url);
         connection
             .execute(
-                "INSERT INTO accounts (id, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'relay', ?2, '', '', ?3, '', ?4, ?5, ?5, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts), 0))",
+                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'codex', 'relay', ?2, '', '', ?3, '', ?4, ?5, ?5, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'codex'), 0))",
                 params![id, api_base_url, alias, auth_json, now],
             )
             .map_err(database_error)?;
@@ -724,7 +902,7 @@ pub(super) fn update_relay_profile_internal(
     let mut connection = open_database(state)?;
     let (account_type, existing_auth_json) = connection
         .query_row(
-            "SELECT account_type, auth_json FROM accounts WHERE id = ?1",
+            "SELECT account_type, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
             params![profile_id],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
@@ -743,7 +921,7 @@ pub(super) fn update_relay_profile_internal(
     let auth_json = build_relay_auth_json(&api_key)?;
     let duplicate_exists = connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM accounts WHERE account_type = 'relay' AND id <> ?1 AND api_base_url = ?2 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?3)",
+            "SELECT EXISTS(SELECT 1 FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND id <> ?1 AND api_base_url = ?2 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?3)",
             params![profile_id, api_base_url, api_key],
             |row| row.get::<_, bool>(0),
         )
@@ -762,7 +940,7 @@ pub(super) fn update_relay_profile_internal(
         let transaction = connection.transaction().map_err(database_error)?;
         transaction
             .execute(
-                "UPDATE accounts SET alias = ?1, api_base_url = ?2, auth_json = ?3, updated_at = ?4 WHERE id = ?5",
+                "UPDATE accounts SET alias = ?1, api_base_url = ?2, auth_json = ?3, updated_at = ?4 WHERE id = ?5 AND product = 'codex'",
                 params![alias, api_base_url, auth_json, now_millis(), profile_id],
             )
             .map_err(database_error)?;
@@ -802,7 +980,7 @@ pub(super) fn refresh_profile_usage_internal(
     let connection = open_database(state)?;
     let (account_type, account_id, auth_json) = connection
         .query_row(
-            "SELECT account_type, account_id, auth_json FROM accounts WHERE id = ?1",
+            "SELECT account_type, account_id, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
             params![profile_id],
             |row| {
                 Ok((
@@ -826,7 +1004,7 @@ pub(super) fn refresh_profile_usage_internal(
     let now = now_millis();
     connection
         .execute(
-            "UPDATE accounts SET plan_type = CASE WHEN ?1 = '' THEN plan_type ELSE ?1 END, usage_primary_percent = ?2, usage_primary_window_minutes = ?3, usage_primary_resets_at = ?4, usage_secondary_percent = ?5, usage_secondary_window_minutes = ?6, usage_secondary_resets_at = ?7, usage_updated_at = ?8, reset_credits_available_count = ?9 WHERE id = ?10",
+            "UPDATE accounts SET plan_type = CASE WHEN ?1 = '' THEN plan_type ELSE ?1 END, usage_primary_percent = ?2, usage_primary_window_minutes = ?3, usage_primary_resets_at = ?4, usage_secondary_percent = ?5, usage_secondary_window_minutes = ?6, usage_secondary_resets_at = ?7, usage_updated_at = ?8, reset_credits_available_count = ?9 WHERE id = ?10 AND product = 'codex'",
             params![
                 usage.plan_type,
                 usage.primary.as_ref().map(|window| window.used_percent),
@@ -1034,6 +1212,53 @@ pub(super) fn usage_window_from_value(value: &Value) -> Option<UsageWindow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isolates_accounts_by_product() {
+        let directory =
+            std::env::temp_dir().join(format!("cortana-product-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let state = AppState {
+            database_path: directory.join("app.sqlite3"),
+            default_codex_home: directory.clone(),
+            pending_oauth: Arc::new(Mutex::new(None)),
+        };
+        initialize_database(&state).unwrap();
+        upsert_profile_from_auth(
+            &state,
+            r#"{"tokens":{"refresh_token":"codex-refresh"}}"#,
+            "Codex",
+        )
+        .unwrap();
+        let connection = open_database(&state).unwrap();
+        connection
+            .execute(
+                "INSERT INTO accounts (id, product, alias, auth_json, created_at, updated_at) VALUES ('agy', 'antigravity', 'Antigravity', '{}', 1, 1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO accounts (id, product, alias, auth_json, created_at, updated_at) VALUES ('grok', 'grok', 'Grok', '{}', 1, 1)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(list_profiles(&connection, None).unwrap().len(), 1);
+        assert_eq!(
+            list_profiles_for_product(&connection, AccountProduct::Antigravity, None)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            list_profiles_for_product(&connection, AccountProduct::Grok, None)
+                .unwrap()
+                .len(),
+            1
+        );
+        drop(connection);
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn switches_without_confirmation_when_external_auth_has_no_refresh_token() {

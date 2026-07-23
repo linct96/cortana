@@ -74,6 +74,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
             );
             CREATE TABLE IF NOT EXISTS accounts (
               id TEXT PRIMARY KEY NOT NULL,
+              product TEXT NOT NULL DEFAULT 'codex',
               account_type TEXT NOT NULL DEFAULT 'oauth',
               api_base_url TEXT,
               account_id TEXT NOT NULL DEFAULT '',
@@ -87,6 +88,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
               usage_secondary_percent REAL,
               usage_secondary_window_minutes INTEGER,
               usage_secondary_resets_at INTEGER,
+              antigravity_quota_json TEXT,
               usage_updated_at INTEGER,
               reset_credits_available_count INTEGER,
               created_at INTEGER NOT NULL,
@@ -103,6 +105,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
         )
         .map_err(database_error)?;
     for (name, definition) in [
+        ("product", "TEXT NOT NULL DEFAULT 'codex'"),
         ("account_type", "TEXT NOT NULL DEFAULT 'oauth'"),
         ("api_base_url", "TEXT"),
         ("plan_type", "TEXT NOT NULL DEFAULT ''"),
@@ -112,6 +115,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
         ("usage_secondary_percent", "REAL"),
         ("usage_secondary_window_minutes", "INTEGER"),
         ("usage_secondary_resets_at", "INTEGER"),
+        ("antigravity_quota_json", "TEXT"),
         ("usage_updated_at", "INTEGER"),
         ("reset_credits_available_count", "INTEGER"),
     ] {
@@ -302,6 +306,7 @@ mod tests {
         initialize_database(&state).unwrap();
 
         let connection = open_database(&state).unwrap();
+        assert!(account_column_exists(&connection, "product").unwrap());
         assert!(!account_column_exists(&connection, "credits_balance").unwrap());
         assert!(!account_column_exists(&connection, "credits_unlimited").unwrap());
         assert!(!account_column_exists(&connection, "auth_hash").unwrap());

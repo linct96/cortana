@@ -1,7 +1,8 @@
 import { Link } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { AppContent, type MainPath, useAppShell } from './app-shell';
+import { AppContent } from './app-shell';
+import { type MainPath, useAppShell } from './app-shell-context';
 import { AppSidebar } from './app-sidebar';
 
 export function SecondaryPageLayout({

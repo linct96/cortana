@@ -1,5 +1,8 @@
+import type { AccountProduct } from '../../components/app-shell-context';
+
 export type Profile = {
   id: string;
+  product: AccountProduct;
   accountType: 'oauth' | 'relay';
   apiBaseUrl: string | null;
   accountId: string;
@@ -8,11 +11,42 @@ export type Profile = {
   planType: string;
   usagePrimary: UsageWindow | null;
   usageSecondary: UsageWindow | null;
+  antigravityQuota: AntigravityQuota | null;
   usageUpdatedAt: number | null;
   resetCreditsAvailableCount: number | null;
+  isRenewable: boolean;
   isActive: boolean;
   lastUsedAt: number | null;
   updatedAt: number;
+};
+
+export type { AccountProduct };
+
+export type AntigravityQuota = {
+  projectId: string | null;
+  forbidden: boolean;
+  models: AntigravityModelQuota[];
+  groups: AntigravityQuotaGroup[];
+};
+
+export type AntigravityModelQuota = {
+  modelId: string;
+  displayName: string;
+  remainingPercent: number;
+  resetsAt: number | null;
+};
+
+export type AntigravityQuotaGroup = {
+  displayName: string;
+  buckets: AntigravityQuotaBucket[];
+};
+
+export type AntigravityQuotaBucket = {
+  bucketId: string;
+  window: string;
+  displayName: string;
+  remainingPercent: number;
+  resetsAt: number | null;
 };
 
 export type ResetCredits = {
@@ -59,3 +93,13 @@ export type PendingConfirm = {
 } | null;
 
 export type AddMode = 'browser' | 'paste' | 'relay';
+
+export function planLabel(planType: string) {
+  const normalized = planType.trim().toLowerCase();
+  if (normalized.includes('ultra')) return 'Ultra';
+  if (normalized.includes('pro')) return 'Pro';
+  if (normalized.includes('free')) return 'Free';
+  if (normalized === 'plus') return 'Plus';
+  if (normalized === 'team') return 'Team';
+  return planType.trim();
+}

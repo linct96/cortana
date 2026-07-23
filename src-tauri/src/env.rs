@@ -2,6 +2,9 @@ use super::{codex::auth_path, *};
 
 const CODEX_RELEASE_URL: &str = "https://api.github.com/repos/openai/codex/releases/latest";
 const CLAUDE_RELEASE_URL: &str = "https://downloads.claude.ai/claude-code-releases/latest";
+const ANTIGRAVITY_RELEASE_URL: &str =
+    "https://api.github.com/repos/google-antigravity/antigravity-cli/releases/latest";
+const GROK_RELEASE_URL: &str = "https://x.ai/cli/stable";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +19,32 @@ pub(super) struct CliEnvironment {
 pub(super) async fn is_codex_cli_available(state: State<'_, AppState>) -> Result<bool, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || Ok(find_codex(&state).is_some()))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(super) async fn is_claude_cli_available(state: State<'_, AppState>) -> Result<bool, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || Ok(find_claude(&state).is_some()))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(super) async fn is_antigravity_cli_available(
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || Ok(find_antigravity(&state).is_some()))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(super) async fn is_grok_cli_available(state: State<'_, AppState>) -> Result<bool, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || Ok(find_grok(&state).is_some()))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -36,6 +65,26 @@ pub(super) async fn get_claude_cli_environment(
 ) -> Result<CliEnvironment, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || inspect_claude_environment(&state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(super) async fn get_antigravity_cli_environment(
+    state: State<'_, AppState>,
+) -> Result<CliEnvironment, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || inspect_antigravity_environment(&state))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(super) async fn get_grok_cli_environment(
+    state: State<'_, AppState>,
+) -> Result<CliEnvironment, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || inspect_grok_environment(&state))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -115,14 +164,7 @@ fn inspect_claude_environment(state: &AppState) -> Result<CliEnvironment, String
         .default_codex_home
         .parent()
         .unwrap_or(&state.default_codex_home);
-    let found = claude_candidates(home).into_iter().find_map(|candidate| {
-        let output = codex_command(&candidate, &["--version"]).output().ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let version = parse_claude_version(&String::from_utf8_lossy(&output.stdout))?;
-        Some((candidate, version))
-    });
+    let found = find_claude(state);
 
     Ok(CliEnvironment {
         installed: found.is_some(),
@@ -134,6 +176,160 @@ fn inspect_claude_environment(state: &AppState) -> Result<CliEnvironment, String
             .unwrap_or("unknown")
             .to_string(),
     })
+}
+
+fn find_claude(state: &AppState) -> Option<(PathBuf, String)> {
+    let home = state
+        .default_codex_home
+        .parent()
+        .unwrap_or(&state.default_codex_home);
+    claude_candidates(home).into_iter().find_map(|candidate| {
+        let output = codex_command(&candidate, &["--version"]).output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let version = parse_claude_version(&String::from_utf8_lossy(&output.stdout))?;
+        Some((candidate, version))
+    })
+}
+
+fn inspect_antigravity_environment(state: &AppState) -> Result<CliEnvironment, String> {
+    let found = find_antigravity(state);
+
+    Ok(CliEnvironment {
+        installed: found.is_some(),
+        installed_version: found.as_ref().map(|(_, version)| version.clone()),
+        latest_version: fetch_latest_antigravity_version(),
+        install_method: found
+            .as_ref()
+            .map(|(candidate, _)| antigravity_install_method(candidate, antigravity_home(state)))
+            .unwrap_or("unknown")
+            .to_string(),
+    })
+}
+
+fn inspect_grok_environment(state: &AppState) -> Result<CliEnvironment, String> {
+    let found = find_grok(state);
+    Ok(CliEnvironment {
+        installed: found.is_some(),
+        installed_version: found.as_ref().map(|(_, version)| version.clone()),
+        latest_version: fetch_latest_grok_version(),
+        install_method: found
+            .as_ref()
+            .map(|(candidate, _)| grok_install_method(candidate, grok_home(state)))
+            .unwrap_or("unknown")
+            .to_string(),
+    })
+}
+
+pub(super) fn grok_home(state: &AppState) -> PathBuf {
+    std::env::var_os("GROK_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| antigravity_home(state).join(".grok"))
+}
+
+fn find_grok(state: &AppState) -> Option<(PathBuf, String)> {
+    grok_candidates(state).into_iter().find_map(|candidate| {
+        let output = codex_command(&candidate, &["--version"]).output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        parse_grok_version(&stdout)
+            .or_else(|| parse_grok_version(&stderr))
+            .map(|version| (candidate, version))
+    })
+}
+
+pub(super) fn grok_candidates(state: &AppState) -> Vec<PathBuf> {
+    let home = grok_home(state);
+    #[cfg(not(target_os = "windows"))]
+    let mut candidates = vec![home.join("bin/grok")];
+    #[cfg(target_os = "windows")]
+    let mut candidates = vec![home.join("bin/grok.exe")];
+    #[cfg(target_os = "macos")]
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/grok"),
+        PathBuf::from("/usr/local/bin/grok"),
+    ]);
+    #[cfg(not(target_os = "windows"))]
+    candidates.push(PathBuf::from("grok"));
+    #[cfg(target_os = "windows")]
+    candidates.extend([PathBuf::from("grok.exe"), PathBuf::from("grok")]);
+    candidates
+}
+
+fn grok_install_method(candidate: &Path, home: PathBuf) -> &'static str {
+    if candidate.starts_with(home) {
+        "standalone"
+    } else if candidate
+        .canonicalize()
+        .unwrap_or_else(|_| candidate.to_path_buf())
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .contains("homebrew")
+    {
+        "brew"
+    } else {
+        "unknown"
+    }
+}
+
+fn antigravity_home(state: &AppState) -> &Path {
+    state
+        .default_codex_home
+        .parent()
+        .unwrap_or(&state.default_codex_home)
+}
+
+fn find_antigravity(state: &AppState) -> Option<(PathBuf, String)> {
+    antigravity_candidates(antigravity_home(state))
+        .into_iter()
+        .find_map(|candidate| {
+            let output = codex_command(&candidate, &["--version"]).output().ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let version = parse_cli_version(&String::from_utf8_lossy(&output.stdout))?;
+            Some((candidate, version))
+        })
+}
+
+fn antigravity_candidates(home: &Path) -> Vec<PathBuf> {
+    #[cfg(not(target_os = "windows"))]
+    let mut candidates = vec![home.join(".local/bin/agy")];
+    #[cfg(target_os = "windows")]
+    let mut candidates = vec![home.join("AppData/Local/agy/bin/agy.exe")];
+    #[cfg(target_os = "macos")]
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/agy"),
+        PathBuf::from("/usr/local/bin/agy"),
+    ]);
+    #[cfg(not(target_os = "windows"))]
+    candidates.push(PathBuf::from("agy"));
+    #[cfg(target_os = "windows")]
+    candidates.extend([PathBuf::from("agy.exe"), PathBuf::from("agy")]);
+    candidates
+}
+
+fn antigravity_install_method(candidate: &Path, home: &Path) -> &'static str {
+    if candidate.starts_with(home.join(".local"))
+        || candidate.starts_with(home.join("AppData/Local/agy"))
+    {
+        return "standalone";
+    }
+    let path = candidate
+        .canonicalize()
+        .unwrap_or_else(|_| candidate.to_path_buf())
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    if path.contains("homebrew") || path.contains("cellar/antigravity-cli") {
+        "brew"
+    } else {
+        "unknown"
+    }
 }
 
 fn claude_candidates(home: &Path) -> Vec<PathBuf> {
@@ -194,12 +390,56 @@ fn fetch_latest_claude_version() -> Option<String> {
 }
 
 fn parse_claude_version(value: &str) -> Option<String> {
+    parse_cli_version(value)
+}
+
+fn parse_cli_version(value: &str) -> Option<String> {
     let version = value.split_whitespace().next()?.trim_start_matches('v');
     (!version.is_empty()
         && version
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || ".-+".contains(character)))
     .then(|| version.to_string())
+}
+
+fn parse_grok_version(value: &str) -> Option<String> {
+    value
+        .split_whitespace()
+        .find(|part| part.contains('.') && part.chars().any(|character| character.is_ascii_digit()))
+        .and_then(parse_cli_version)
+}
+
+fn fetch_latest_antigravity_version() -> Option<String> {
+    let release: Value = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent(concat!("Cortana/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .ok()?
+        .get(ANTIGRAVITY_RELEASE_URL)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .ok()?
+        .json()
+        .ok()?;
+    release
+        .get("tag_name")
+        .and_then(Value::as_str)
+        .and_then(parse_cli_version)
+}
+
+fn fetch_latest_grok_version() -> Option<String> {
+    Client::builder()
+        .timeout(Duration::from_secs(10))
+        .user_agent(concat!("Cortana/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .ok()?
+        .get(GROK_RELEASE_URL)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .ok()?
+        .text()
+        .ok()
+        .and_then(|version| parse_grok_version(&version))
 }
 
 fn parse_doctor_environment(report: &Value) -> (Option<String>, Option<String>, &'static str) {
@@ -264,6 +504,7 @@ fn normalize_install_method(value: &str) -> &'static str {
 }
 
 pub(super) fn codex_command(candidate: &Path, arguments: &[&str]) -> Command {
+    #[allow(unused_mut)]
     let mut command = if candidate
         .extension()
         .is_some_and(|extension| extension == "cmd")
@@ -333,5 +574,31 @@ mod tests {
             ),
             "standalone"
         );
+    }
+
+    #[test]
+    fn parses_antigravity_environment_metadata() {
+        assert_eq!(parse_cli_version("1.1.3\n").as_deref(), Some("1.1.3"));
+        assert_eq!(parse_cli_version("v1.1.3").as_deref(), Some("1.1.3"));
+        assert_eq!(
+            antigravity_install_method(
+                Path::new("/Users/test/.local/bin/agy"),
+                Path::new("/Users/test")
+            ),
+            "standalone"
+        );
+    }
+
+    #[test]
+    fn parses_grok_environment_metadata() {
+        assert_eq!(
+            parse_grok_version("grok 0.2.106").as_deref(),
+            Some("0.2.106")
+        );
+        assert_eq!(
+            parse_grok_version("grok 0.2.106 (bde89716f679)").as_deref(),
+            Some("0.2.106")
+        );
+        assert_eq!(parse_grok_version("0.2.106\n").as_deref(), Some("0.2.106"));
     }
 }

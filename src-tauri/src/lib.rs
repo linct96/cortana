@@ -31,10 +31,15 @@ use uuid::Uuid;
 mod accounts;
 mod agents;
 mod analytics;
+mod antigravity;
 mod billing;
+mod claude;
 mod codex;
+mod config;
 mod db;
 mod env;
+mod grok;
+mod grok_oauth;
 mod local_web;
 mod oauth;
 mod sessions;
@@ -89,6 +94,30 @@ fn open_codex_home(app: tauri::AppHandle, codex_home: String) -> Result<bool, St
 fn open_codex_cli_install_page(app: tauri::AppHandle) -> Result<(), String> {
     app.opener()
         .open_url("https://learn.chatgpt.com/docs/codex/cli", None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_claude_cli_install_page(app: tauri::AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url("https://code.claude.com/docs/en/quickstart", None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_antigravity_cli_install_page(app: tauri::AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url(
+            "https://github.com/google-antigravity/antigravity-cli/releases/latest",
+            None::<&str>,
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_grok_cli_install_page(app: tauri::AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url("https://x.ai/cli/stable", None::<&str>)
         .map_err(|error| error.to_string())
 }
 

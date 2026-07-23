@@ -10,6 +10,7 @@ import {
   Server,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
+import { productName, useAppShell } from '../../components/app-shell-context';
 import { PageHeader, PageShell } from '../../components/page-shell';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -17,6 +18,7 @@ import { Separator } from '../../components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { AddAccountDialog, ConfirmAccountDialog, EditAccountDialog } from './account-dialog';
 import { AccountBalance, AccountRow } from './account-list';
+import { AntigravityQuotaDialog } from './antigravity-quota-dialog';
 import { ResetCreditsDialog } from './reset-credits-dialog';
 import type { AuthState } from './types';
 import { useAccountManager } from './use-account-manager';
@@ -31,7 +33,8 @@ const statusStyles: Record<
 };
 
 export default function AccountsPage() {
-  const account = useAccountManager();
+  const { activeProduct } = useAppShell();
+  const account = useAccountManager(activeProduct);
 
   return (
     <PageShell className="flex min-h-0 flex-col overflow-hidden">
@@ -54,15 +57,17 @@ export default function AccountsPage() {
                       account.loading || account.busy === 'refresh:all' ? 'animate-spin' : ''
                     }
                   />
-                  <span className="sr-only">刷新全部</span>
+                  <span className="sr-only">刷新</span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>刷新全部</TooltipContent>
+              <TooltipContent>
+                {account.product === 'claude' ? '更新全部登录令牌' : '刷新全部'}
+              </TooltipContent>
             </Tooltip>
             <Button
               type="button"
               onClick={() => account.setAddOpen(true)}
-              disabled={account.busy === 'oauth'}
+              disabled={account.busy === 'oauth' || account.busy === 'import'}
             >
               <Plus data-icon="inline-start" /> 添加账号
             </Button>
@@ -81,82 +86,91 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
 
   return (
     <>
-      <div className="mt-7 w-full px-4 sm:px-8 lg:px-12">
-        <Card className="w-full" aria-label="当前 Codex 状态">
-          <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              <span
-                className={`grid size-10 shrink-0 place-items-center rounded-full ${statusTone}`}
-              >
-                <AuthIcon size={19} />
-              </span>
-              <div className="min-w-0">
-                <span className="mb-1 block text-xs font-medium tracking-wide text-muted-foreground">
-                  当前账户
+      {account.product !== 'antigravity' && (
+        <div className="mt-7 w-full px-4 sm:px-8 lg:px-12">
+          <Card className="w-full" aria-label={`当前 ${productName(account.product)} 状态`}>
+            <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <span
+                  className={`grid size-10 shrink-0 place-items-center rounded-full ${statusTone}`}
+                >
+                  <AuthIcon size={19} />
                 </span>
-                <strong className="block truncate text-base font-semibold">
-                  {account.activeProfile?.alias ?? '尚未选择账户'}
-                </strong>
-                {!account.activeProfile && (
-                  <span className="block truncate text-sm text-muted-foreground">
-                    {account.status?.authState.kind === 'missing'
-                      ? '未检测到 auth.json'
-                      : '导入当前登录态后即可管理'}
+                <div className="min-w-0">
+                  <span className="mb-1 block text-xs font-medium tracking-wide text-muted-foreground">
+                    当前账户
                   </span>
-                )}
-              </div>
-              {account.status &&
-                account.status.authState.kind !== 'managed' &&
-                account.status.authState.kind !== 'missing' && (
-                  <Button
-                    variant="secondary"
-                    className="ml-auto shrink-0 text-primary"
-                    type="button"
-                    onClick={() => void account.importCurrent()}
-                    disabled={account.busy === 'import'}
-                  >
-                    {account.busy === 'import' ? (
-                      <LoaderCircle className="animate-spin" />
-                    ) : (
-                      <LogIn />
-                    )}
-                    {account.status.detectedProfile ? '同步该账号' : '导入当前状态'}
-                  </Button>
-                )}
-            </div>
-            {account.activeProfile?.accountType === 'oauth' && (
-              <>
-                <Separator className="sm:h-auto sm:w-px sm:self-stretch" />
-                <AccountBalance
-                  profile={account.activeProfile}
-                  isRefreshing={
-                    account.loading || account.busy === `refresh:${account.activeProfile.id}`
-                  }
-                  onRefresh={() =>
-                    account.status?.detectedProfile
-                      ? void account.refresh()
-                      : void account.refreshAccount(account.activeProfile!)
-                  }
-                />
-              </>
-            )}
-            {account.activeProfile?.accountType === 'relay' && account.activeProfile.apiBaseUrl && (
-              <>
-                <Separator className="sm:h-auto sm:w-px sm:self-stretch" />
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <Server className="shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <strong className="block text-sm font-medium">中转站 API</strong>
+                  <strong className="block truncate text-base font-semibold">
+                    {account.activeProfile?.alias ?? '尚未选择账户'}
+                  </strong>
+                  {!account.activeProfile && (
                     <span className="block truncate text-sm text-muted-foreground">
-                      {account.activeProfile.apiBaseUrl}
+                      {account.status?.authState.kind === 'missing'
+                        ? account.product === 'claude'
+                          ? '未检测到 settings.json 中的 Claude 凭据'
+                          : '未检测到 auth.json'
+                        : '导入当前登录态后即可管理'}
                     </span>
-                  </div>
+                  )}
+                  {account.product === 'claude' && account.status?.authPath && (
+                    <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
+                      {account.status.authPath}
+                    </span>
+                  )}
                 </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                {account.status &&
+                  account.status.authState.kind !== 'managed' &&
+                  account.status.authState.kind !== 'missing' &&
+                  (account.product !== 'claude' || account.status.detectedProfile) && (
+                    <Button
+                      variant="secondary"
+                      className="ml-auto shrink-0 text-primary"
+                      type="button"
+                      onClick={() => void account.importCurrent()}
+                      disabled={account.busy === 'import'}
+                    >
+                      {account.busy === 'import' ? (
+                        <LoaderCircle className="animate-spin" />
+                      ) : (
+                        <LogIn />
+                      )}
+                      {account.status.detectedProfile ? '同步该账号' : '导入当前状态'}
+                    </Button>
+                  )}
+              </div>
+              {account.product !== 'claude' &&
+                account.activeProfile?.accountType === 'oauth' &&
+                !account.status?.detectedProfile && (
+                  <>
+                    <Separator className="sm:h-auto sm:w-px sm:self-stretch" />
+                    <AccountBalance
+                      profile={account.activeProfile}
+                      isRefreshing={
+                        account.loading || account.busy === `refresh:${account.activeProfile.id}`
+                      }
+                      onRefresh={() => void account.refreshAccount(account.activeProfile!)}
+                    />
+                  </>
+                )}
+              {account.activeProfile?.accountType === 'relay' &&
+                account.activeProfile.apiBaseUrl && (
+                  <>
+                    <Separator className="sm:h-auto sm:w-px sm:self-stretch" />
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <Server className="shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <strong className="block text-sm font-medium">中转站 API</strong>
+                        <span className="block truncate text-sm text-muted-foreground">
+                          {account.activeProfile.apiBaseUrl}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <section className="mt-9 flex min-h-0 w-full flex-1 flex-col">
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -179,6 +193,7 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                     onSwitch={() => void account.switchTo(profile)}
                     onRefresh={() => void account.refreshAccount(profile)}
                     onEdit={() => void account.openEditor(profile)}
+                    onViewQuota={() => account.setQuotaProfileId(profile.id)}
                     onViewResetCredits={() => void account.viewResetCredits(profile)}
                     onDelete={() => account.setConfirm({ kind: 'delete', profile })}
                   />
@@ -198,7 +213,10 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           onClose={() =>
             account.busy === 'oauth'
               ? void account.cancelOAuth()
-              : account.busy !== 'auth-json' && account.busy !== 'relay' && account.closeAddDialog()
+              : account.busy !== 'auth-json' &&
+                account.busy !== 'relay' &&
+                account.busy !== 'import' &&
+                account.closeAddDialog()
           }
         />
       )}
@@ -236,6 +254,14 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           profile={account.resetCreditsProfile}
           credits={account.resetCredits}
           onClose={() => account.setResetCreditsProfile(null)}
+        />
+      )}
+      {account.quotaProfile && (
+        <AntigravityQuotaDialog
+          profile={account.quotaProfile}
+          isRefreshing={account.busy === `refresh:${account.quotaProfile.id}`}
+          onRefresh={() => void account.refreshAccount(account.quotaProfile!)}
+          onClose={() => account.setQuotaProfileId(null)}
         />
       )}
     </>

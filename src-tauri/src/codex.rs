@@ -1,5 +1,7 @@
 use super::{db::*, *};
 
+type ProviderConfig = (Option<String>, Option<String>, Option<String>);
+
 pub(super) fn auth_path(state: &AppState) -> Result<PathBuf, String> {
     let connection = open_database(state)?;
     let custom_home = get_setting(&connection, "codex_home")?.unwrap_or_default();
@@ -16,21 +18,12 @@ pub(super) fn codex_config_path(state: &AppState) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub(super) fn get_codex_config(state: State<'_, AppState>) -> Result<CodexConfigFile, String> {
+pub(super) fn get_codex_config(state: State<'_, AppState>) -> Result<ConfigFile, String> {
     read_codex_config(&state)
 }
 
-pub(super) fn read_codex_config(state: &AppState) -> Result<CodexConfigFile, String> {
-    let path = codex_config_path(state)?;
-    let content = if path.exists() {
-        fs::read_to_string(&path).map_err(|error| format!("无法读取 Codex config.toml：{error}"))?
-    } else {
-        String::new()
-    };
-    Ok(CodexConfigFile {
-        path: path.display().to_string(),
-        content,
-    })
+pub(super) fn read_codex_config(state: &AppState) -> Result<ConfigFile, String> {
+    config::read_config(&codex_config_path(state)?, "", "Codex config.toml")
 }
 
 #[tauri::command]
@@ -39,16 +32,8 @@ pub(super) fn save_codex_config(state: State<'_, AppState>, content: String) -> 
 }
 
 #[tauri::command]
-pub(super) fn validate_codex_config(content: String) -> Vec<CodexConfigDiagnostic> {
-    let Err(error) = toml::from_str::<toml::Value>(&content) else {
-        return Vec::new();
-    };
-    let span = error.span().unwrap_or(0..0);
-    vec![CodexConfigDiagnostic {
-        from: byte_offset_to_utf16(&content, span.start),
-        to: byte_offset_to_utf16(&content, span.end),
-        message: error.message().to_string(),
-    }]
+pub(super) fn validate_codex_config(content: String) -> Vec<ConfigDiagnostic> {
+    config::validate_toml(&content)
 }
 
 #[tauri::command]
@@ -57,25 +42,11 @@ pub(super) fn format_codex_config(content: String) -> Result<String, String> {
 }
 
 pub(super) fn format_codex_config_internal(content: &str) -> Result<String, String> {
-    toml::from_str::<toml::Value>(content)
-        .map_err(|error| format!("config.toml 格式错误：{error}"))?;
-    Ok(taplo::formatter::format(
-        content,
-        taplo::formatter::Options::default(),
-    ))
-}
-
-pub(super) fn byte_offset_to_utf16(content: &str, offset: usize) -> usize {
-    content
-        .char_indices()
-        .take_while(|(index, _)| *index < offset)
-        .map(|(_, character)| character.len_utf16())
-        .sum()
+    config::format_toml(content, "config.toml")
 }
 
 pub(super) fn save_codex_config_internal(state: &AppState, content: &str) -> Result<(), String> {
-    toml::from_str::<toml::Value>(&content)
-        .map_err(|error| format!("config.toml 格式错误：{error}"))?;
+    config::parse_toml(content, "config.toml")?;
     write_file_atomically(&codex_config_path(state)?, content)
 }
 
@@ -117,9 +88,7 @@ pub(super) fn update_provider_config_content(
     Ok(document.to_string())
 }
 
-pub(super) fn read_provider_config(
-    path: &Path,
-) -> Result<(Option<String>, Option<String>, Option<String>), String> {
+pub(super) fn read_provider_config(path: &Path) -> Result<ProviderConfig, String> {
     if !path.exists() {
         return Ok((None, None, None));
     }

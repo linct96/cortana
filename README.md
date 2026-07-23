@@ -1,6 +1,6 @@
 # Cortana
 
-本地 Tauri 桌面工具，用于保存多个 Codex CLI `auth.json` 档案，并将选中的档案写回 Codex 使用的认证目录。账户既可以使用 ChatGPT OAuth，也可以使用提供 API Key 和 Responses API 地址的中转站。
+本地 Tauri 桌面工具，用于管理 Codex、Claude、Antigravity 和 Grok CLI 账号。支持保存、排序和切换多个本地认证档案。
 
 ## 开发环境
 
@@ -10,6 +10,7 @@
 - pnpm 11.8.0
 - Rust 1.93.0
 - 支持 `app-server` 的 Codex CLI（会话管理功能需要）
+- Grok CLI（Grok 账号管理需要）
 
 系统依赖：
 
@@ -38,12 +39,13 @@ pnpm --filter @cortana/desktop dev:web
 
 Web 访问默认关闭，可在桌面应用的“设置 → 常规 → Web 访问”中启用，默认地址为 `http://127.0.0.1:11456`。开发时需运行 `pnpm dev` 以同时启动桌面后端，再访问 Vite 提供的 Web 链接。生产环境可从托盘菜单“在浏览器中打开”进入；首次进入会自动完成本机访问授权。
 
-应用默认使用 `~/.codex/auth.json`。可在设置中改为其他 Codex 主目录。所有档案仅保存在本机用户级 SQLite 数据库，包含可用认证令牌或 API Key；请勿把该数据库上传到同步盘或代码仓库。中转站没有统一额度接口，因此应用不会查询或展示其额度。
+Codex 默认使用 `~/.codex/auth.json`，Claude 使用 `~/.claude/settings.json`，Grok 默认使用 `$GROK_HOME/auth.json` 或 `~/.grok/auth.json`。Claude 中转站账户使用 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN`；所有档案仅保存在本机用户级 SQLite 数据库，包含可用认证令牌或 API Key；请勿把该数据库上传到同步盘或代码仓库。
 
 相关文档：
 
 - [Codex auth.json 结构](docs/auth-json.md)
 - [OpenAI 接口清单](docs/openai-interfaces.md)
+- [Grok 官方接口清单](docs/grok-interfaces.md)
 - [常见开发问题](docs/common-development-issues.md)
 
 ## 构建
