@@ -304,6 +304,7 @@ pub(super) fn estimated_cost(
     model_id: &str,
     input_tokens: u64,
     cached_input_tokens: u64,
+    cache_write_input_tokens: u64,
     output_tokens: u64,
 ) -> Option<f64> {
     let normalized = normalize_model_id(model_id);
@@ -315,10 +316,14 @@ pub(super) fn estimated_cost(
     let input_price = price.input_cost_per_million.parse::<f64>().ok()?;
     let output_price = price.output_cost_per_million.parse::<f64>().ok()?;
     let cache_read_price = price.cache_read_cost_per_million.parse::<f64>().ok()?;
-    let fresh_input_tokens = input_tokens.saturating_sub(cached_input_tokens);
+    let cache_write_price = price.cache_write_cost_per_million.parse::<f64>().ok()?;
+    let fresh_input_tokens = input_tokens
+        .saturating_sub(cached_input_tokens)
+        .saturating_sub(cache_write_input_tokens);
     Some(
         (fresh_input_tokens as f64 * input_price
             + cached_input_tokens as f64 * cache_read_price
+            + cache_write_input_tokens as f64 * cache_write_price
             + output_tokens as f64 * output_price)
             / 1_000_000.0,
     )
@@ -402,8 +407,22 @@ mod tests {
             "gpt-5.4".to_string(),
             pricing("gpt-5.4", "2.5", "15", "0.25"),
         )]);
-        let cost =
-            estimated_cost(&prices, "openai/gpt-5.4@high", 1_000_000, 200_000, 100_000).unwrap();
+        let cost = estimated_cost(
+            &prices,
+            "openai/gpt-5.4@high",
+            1_000_000,
+            200_000,
+            0,
+            100_000,
+        )
+        .unwrap();
         assert!((cost - 3.55).abs() < f64::EPSILON);
+
+        let mut price = pricing("gpt-5.4", "2.5", "15", "0.25");
+        price.cache_write_cost_per_million = "1".to_string();
+        let prices = HashMap::from([("gpt-5.4".to_string(), price)]);
+        let cost =
+            estimated_cost(&prices, "gpt-5.4", 1_000_000, 200_000, 100_000, 100_000).unwrap();
+        assert!((cost - 3.4).abs() < f64::EPSILON);
     }
 }
