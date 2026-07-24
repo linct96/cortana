@@ -193,8 +193,8 @@ pub fn run() {
             let state = app.state::<AppState>();
             let connection = db::open_database(&state)?;
             if db::get_setting(&connection, "autostart_initialized")?.is_none() {
-                if let Err(error) = app.autolaunch().enable() {
-                    eprintln!("Unable to enable autostart: {error}");
+                if let Err(error) = app.autolaunch().disable() {
+                    eprintln!("Unable to disable autostart: {error}");
                 }
                 db::set_setting(&connection, "autostart_initialized", "true")?;
             }
