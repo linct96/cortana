@@ -204,11 +204,11 @@ function AnalyticsContent({ analytics, range }: { analytics: UsageAnalytics; ran
       )}
 
       <section aria-label="用量概览" className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
-        <MetricCard label="总 Token" value={analytics.total.totalTokens} detail="当前范围内用量" />
         <CostMetricCard
           value={analytics.estimatedCostUsd}
           unpricedModelCount={analytics.unpricedModelCount}
         />
+        <MetricCard label="总 Token" value={analytics.total.totalTokens} detail="当前范围内用量" />
         <MetricCard
           label="输入 Token"
           value={analytics.total.inputTokens}
