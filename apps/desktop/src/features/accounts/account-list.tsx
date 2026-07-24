@@ -7,6 +7,7 @@ import {
   LoaderCircle,
   Pencil,
   RefreshCw,
+  SquareTerminal,
   Tickets,
   Trash2,
 } from 'lucide-react';
@@ -35,7 +36,9 @@ export function AccountRow({
   index,
   isBusy,
   isRefreshing,
+  isOpeningCli,
   onSwitch,
+  onOpenCli,
   onRefresh,
   onEdit,
   onViewQuota,
@@ -46,7 +49,9 @@ export function AccountRow({
   index: number;
   isBusy: boolean;
   isRefreshing: boolean;
+  isOpeningCli: boolean;
   onSwitch: () => void;
+  onOpenCli: () => void;
   onRefresh: () => void;
   onEdit: () => void;
   onViewQuota: () => void;
@@ -127,6 +132,12 @@ export function AccountRow({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuGroup>
+              {profile.product === 'codex' && (
+                <DropdownMenuItem onClick={onOpenCli} disabled={isOpeningCli}>
+                  {isOpeningCli ? <LoaderCircle className="animate-spin" /> : <SquareTerminal />}
+                  打开终端
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={onEdit}>
                 <Pencil /> 编辑
               </DropdownMenuItem>

@@ -159,6 +159,11 @@ async fn dispatch_command(
         "get_app_status" => result!(
             accounts::get_app_status(app.clone(), app.state(), optional(&args, "product")?).await
         ),
+        "get_terminal_app" => result!(env::get_terminal_app(app.state())),
+        "set_terminal_app" => result!(env::set_terminal_app(
+            app.state(),
+            arg(&args, "terminalApp")?
+        )),
         "switch_profile" => result!(
             accounts::switch_profile(
                 app.clone(),
@@ -168,6 +173,9 @@ async fn dispatch_command(
                 optional(&args, "product")?
             )
             .await
+        ),
+        "open_codex_cli_with_profile" => result!(
+            accounts::open_codex_cli_with_profile(app.state(), arg(&args, "profileId")?).await
         ),
         "start_oauth_add" => result!(oauth::start_oauth_add(
             app.clone(),

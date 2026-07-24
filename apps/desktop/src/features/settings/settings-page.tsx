@@ -39,6 +39,13 @@ type UsageRefreshSettings = {
   inactiveIntervalMinutes: number;
 };
 
+type TerminalApp = 'terminal' | 'warp' | 'ghostty';
+
+const terminalOptions = [
+  { label: 'Terminal', value: 'terminal' },
+  { label: 'Warp', value: 'warp' },
+  { label: 'Ghostty', value: 'ghostty' },
+];
 const activeRefreshOptions = [1, 2, 5, 10].map((minutes) => ({
   label: `${minutes} 分钟`,
   value: String(minutes),
@@ -60,6 +67,7 @@ export default function SettingsPage() {
 function SettingsContent() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [usageRefresh, setUsageRefresh] = useState<UsageRefreshSettings | null>(null);
+  const [terminalApp, setTerminalApp] = useState<TerminalApp | null>(null);
   const [webPort, setWebPort] = useState('11456');
   const [webPortError, setWebPortError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>('loading');
@@ -68,10 +76,12 @@ function SettingsContent() {
     Promise.all([
       invoke<AppStatus>('get_app_status'),
       invoke<UsageRefreshSettings>('get_usage_refresh_settings'),
+      invoke<TerminalApp>('get_terminal_app'),
     ])
-      .then(([nextStatus, nextUsageRefresh]) => {
+      .then(([nextStatus, nextUsageRefresh, nextTerminalApp]) => {
         setStatus(nextStatus);
         setUsageRefresh(nextUsageRefresh);
+        setTerminalApp(nextTerminalApp);
         setWebPort(String(nextStatus.webAccess.port));
       })
       .catch((error) => toast.error(appError(error)))
@@ -82,6 +92,17 @@ function SettingsContent() {
     setBusy('usage-refresh');
     try {
       setUsageRefresh(await invoke<UsageRefreshSettings>('set_usage_refresh_settings', next));
+    } catch (error) {
+      toast.error(appError(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveTerminalApp(next: TerminalApp) {
+    setBusy('terminal-app');
+    try {
+      setTerminalApp(await invoke<TerminalApp>('set_terminal_app', { terminalApp: next }));
     } catch (error) {
       toast.error(appError(error));
     } finally {
@@ -150,7 +171,7 @@ function SettingsContent() {
           <h2 id="app-settings-heading" className="px-1 text-sm font-medium text-foreground">
             应用设置
           </h2>
-          <div className="overflow-hidden rounded-lg border border-border">
+          <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4">
               <div className="flex min-w-0 flex-col gap-1">
                 <h3 className="text-sm font-medium">启动</h3>
@@ -163,6 +184,39 @@ function SettingsContent() {
                 onCheckedChange={(enabled) => void toggleAutostart(enabled)}
                 disabled={busy === 'autostart' || busy === 'loading'}
               />
+            </div>
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4">
+              <div className="flex min-w-0 flex-col gap-1">
+                <h3 className="text-sm font-medium">终端应用</h3>
+                <p className="text-sm text-muted-foreground">打开账号终端时使用</p>
+              </div>
+              <Select
+                items={terminalOptions}
+                value={terminalApp}
+                onValueChange={(next) => next && void saveTerminalApp(next as TerminalApp)}
+                disabled={!terminalApp || busy === 'terminal-app' || busy === 'loading'}
+              >
+                <SelectTrigger className="w-32" aria-label="终端应用">
+                  <SelectValue>
+                    {terminalApp && (
+                      <>
+                        <TerminalAppIcon app={terminalApp} />
+                        {terminalOptions.find((option) => option.value === terminalApp)?.label}
+                      </>
+                    )}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {terminalOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        <TerminalAppIcon app={option.value as TerminalApp} />
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </section>
@@ -311,6 +365,29 @@ function SettingsContent() {
         </section>
       </div>
     </div>
+  );
+}
+
+function TerminalAppIcon({ app }: { app: TerminalApp }) {
+  if (app === 'terminal') {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="m7 8 4 4-4 4M13 16h4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor">
+      <path
+        d={
+          app === 'warp'
+            ? 'M12.035 2.723h9.253A2.712 2.712 0 0 1 24 5.435v10.529a2.712 2.712 0 0 1-2.712 2.713H8.047Zm-1.681 2.6L6.766 19.677h5.598l-.399 1.6H2.712A2.712 2.712 0 0 1 0 18.565V8.036a2.712 2.712 0 0 1 2.712-2.712Z'
+            : 'M12 0C6.7 0 2.4 4.3 2.4 9.6v11.146c0 1.772 1.45 3.267 3.222 3.254a3.18 3.18 0 0 0 1.955-.686 1.96 1.96 0 0 1 2.444 0 3.18 3.18 0 0 0 1.976.686c.75 0 1.436-.257 1.98-.686.715-.563 1.71-.587 2.419-.018.59.476 1.355.743 2.182.699 1.705-.094 3.022-1.537 3.022-3.244V9.601C21.6 4.3 17.302 0 12 0M6.069 6.562a1 1 0 0 1 .46.131l3.578 2.065v.002a.974.974 0 0 1 0 1.687L6.53 12.512a.975.975 0 0 1-.976-1.687L7.67 9.602 5.553 8.38a.975.975 0 0 1 .515-1.818m7.438 2.063h4.7a.975.975 0 1 1 0 1.95h-4.7a.975.975 0 0 1 0-1.95'
+        }
+      />
+    </svg>
   );
 }
 

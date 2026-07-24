@@ -190,7 +190,9 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                     index={index}
                     isBusy={account.busy === `switch:${profile.id}`}
                     isRefreshing={account.busy === `refresh:${profile.id}`}
+                    isOpeningCli={account.busy === `open-cli:${profile.id}`}
                     onSwitch={() => void account.switchTo(profile)}
+                    onOpenCli={() => void account.openCli(profile)}
                     onRefresh={() => void account.refreshAccount(profile)}
                     onEdit={() => void account.openEditor(profile)}
                     onViewQuota={() => account.setQuotaProfileId(profile.id)}
