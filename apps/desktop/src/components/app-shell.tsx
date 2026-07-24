@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import antigravityIcon from '../assets/antigravity.png';
+import antigravityIcon from '../assets/antigravity.svg';
 import chatGptIcon from '../assets/chatgpt.svg';
 import claudeIcon from '../assets/claude.svg';
 import grokIcon from '../assets/grok.svg';
@@ -170,20 +170,20 @@ function ProductMenu() {
       </DropdownMenuTrigger>
       <DropdownMenuContent sideOffset={4}>
         <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => void selectProduct('codex')}>
-            <img src={chatGptIcon} alt="" className="size-4" />
-            Codex
-            {activeProduct === 'codex' && <Check className="ml-auto" />}
+          <DropdownMenuItem onClick={() => void selectProduct('antigravity')}>
+            <img src={antigravityIcon} alt="" className="size-4" />
+            Antigravity
+            {antigravity && <Check className="ml-auto" />}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => void selectProduct('claude')}>
             <img src={claudeIcon} alt="" className="size-4" />
             Claude
             {claude && <Check className="ml-auto" />}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void selectProduct('antigravity')}>
-            <img src={antigravityIcon} alt="" className="size-4" />
-            Antigravity
-            {antigravity && <Check className="ml-auto" />}
+          <DropdownMenuItem onClick={() => void selectProduct('codex')}>
+            <img src={chatGptIcon} alt="" className="size-4" />
+            Codex
+            {activeProduct === 'codex' && <Check className="ml-auto" />}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => void selectProduct('grok')}>
             <img src={grokIcon} alt="" className="size-4" />
