@@ -208,6 +208,18 @@ async fn dispatch_command(
         "refresh_profile_usage" => {
             result!(accounts::refresh_profile_usage(app.state(), arg(&args, "profileId")?).await)
         }
+        "refresh_due_profile_usage" => result!(
+            accounts::refresh_due_profile_usage(app.state(), arg(&args, "immediate")?).await
+        ),
+        "get_usage_refresh_settings" => {
+            result!(accounts::get_usage_refresh_settings(app.state()))
+        }
+        "set_usage_refresh_settings" => result!(accounts::set_usage_refresh_settings(
+            app.state(),
+            arg(&args, "enabled")?,
+            arg(&args, "activeIntervalMinutes")?,
+            arg(&args, "inactiveIntervalMinutes")?
+        )),
         "get_profile_reset_credits" => result!(
             accounts::get_profile_reset_credits(app.state(), arg(&args, "profileId")?).await
         ),

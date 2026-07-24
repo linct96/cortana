@@ -54,6 +54,11 @@ export type ResetCredits = {
   credits: ResetCredit[];
 };
 
+export type UsageRefreshResult = {
+  profile: Profile;
+  refreshed: boolean;
+};
+
 export type ResetCredit = {
   id: string;
   title: string;

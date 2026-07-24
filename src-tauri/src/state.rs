@@ -98,6 +98,29 @@ pub(super) struct ProfileSummary {
     pub(super) updated_at: i64,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct UsageRefreshSettings {
+    pub(super) enabled: bool,
+    pub(super) active_interval_minutes: u64,
+    pub(super) inactive_interval_minutes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct UsageRefreshResult {
+    pub(super) profile: ProfileSummary,
+    pub(super) refreshed: bool,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct UsageRefreshRunResult {
+    pub(super) refreshed_count: usize,
+    pub(super) skipped_count: usize,
+    pub(super) failed_count: usize,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AntigravityQuota {

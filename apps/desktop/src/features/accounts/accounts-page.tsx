@@ -80,6 +80,8 @@ export default function AccountsPage() {
 }
 
 function AccountContent({ account }: { account: ReturnType<typeof useAccountManager> }) {
+  if (!account.status) return null;
+
   const authInfo = account.status ? statusStyles[account.status.authState.kind] : null;
   const AuthIcon = authInfo?.icon ?? CircleAlert;
   const statusTone = authInfo?.iconClass ?? 'bg-secondary text-secondary-foreground';
@@ -174,9 +176,7 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
 
       <section className="mt-9 flex min-h-0 w-full flex-1 flex-col">
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {account.loading ? (
-            <EmptyState loading />
-          ) : account.status?.profiles.length ? (
+          {account.status.profiles.length ? (
             <DragDropProvider
               onDragEnd={(event) =>
                 void account.reorderProfiles(move(account.status!.profiles, event))
@@ -268,24 +268,16 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
   );
 }
 
-function EmptyState({ loading = false, onAdd }: { loading?: boolean; onAdd?: () => void }) {
+function EmptyState({ onAdd }: { onAdd?: () => void }) {
   return (
     <div className="flex min-h-52 flex-col items-center justify-center gap-3 border-y text-sm text-muted-foreground">
-      {loading ? (
-        <>
-          <LoaderCircle size={22} className="animate-spin" /> 正在读取账户
-        </>
-      ) : (
-        <>
-          <div className="grid size-11 place-items-center rounded-full bg-secondary text-primary">
-            <LogIn size={22} />
-          </div>
-          <strong className="text-sm font-medium text-foreground">还没有账户档案</strong>
-          <Button variant="secondary" className="text-primary" type="button" onClick={onAdd}>
-            <Plus data-icon="inline-start" /> 添加账号
-          </Button>
-        </>
-      )}
+      <div className="grid size-11 place-items-center rounded-full bg-secondary text-primary">
+        <LogIn size={22} />
+      </div>
+      <strong className="text-sm font-medium text-foreground">还没有账户档案</strong>
+      <Button variant="secondary" className="text-primary" type="button" onClick={onAdd}>
+        <Plus data-icon="inline-start" /> 添加账号
+      </Button>
     </div>
   );
 }
