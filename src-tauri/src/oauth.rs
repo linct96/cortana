@@ -532,12 +532,13 @@ pub(super) fn identity_from_auth_json(auth: &Value) -> Identity {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let mut identity = identity_from_id_token(id_token);
-    if identity.account_id.is_empty() {
-        identity.account_id = tokens
-            .and_then(|tokens| tokens.get("account_id"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
+    if let Some(account_id) = tokens
+        .and_then(|tokens| tokens.get("account_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|account_id| !account_id.is_empty())
+    {
+        identity.account_id = account_id.to_string();
     }
     let access_token = tokens
         .and_then(|tokens| tokens.get("access_token"))
@@ -605,6 +606,22 @@ pub(super) fn identity_from_jwt(token: &str) -> Identity {
         email,
         plan_type,
     }
+}
+
+pub(super) fn chatgpt_user_id_from_auth_json(auth: &Value) -> String {
+    let tokens = auth.get("tokens").and_then(Value::as_object);
+    ["id_token", "access_token"]
+        .into_iter()
+        .filter_map(|key| tokens?.get(key)?.as_str())
+        .find_map(|token| {
+            let claims = decode_jwt_claims(token)?;
+            let auth = claims.get("https://api.openai.com/auth")?.as_object()?;
+            auth.get("chatgpt_user_id")
+                .or_else(|| auth.get("user_id"))?
+                .as_str()
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
 }
 
 pub(super) fn decode_jwt_claims(token: &str) -> Option<Value> {
@@ -843,6 +860,36 @@ mod tests {
 
         assert_eq!(auth["tokens"]["account_id"], "account-123");
         assert_eq!(auth["tokens"]["refresh_token"], "refreshed-rt");
+    }
+
+    #[test]
+    fn reads_selected_account_and_user_identity() {
+        let claims = json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "token-account",
+                "chatgpt_user_id": "user-123"
+            }
+        });
+        let id_token = format!(
+            "header.{}.signature",
+            URL_SAFE_NO_PAD.encode(claims.to_string())
+        );
+        let identity = identity_from_auth_json(&json!({
+            "tokens": {
+                "account_id": "selected-account",
+                "id_token": id_token
+            }
+        }));
+
+        assert_eq!(identity.account_id, "selected-account");
+        assert_eq!(
+            chatgpt_user_id_from_auth_json(&json!({
+                "tokens": {
+                    "id_token": id_token
+                }
+            })),
+            "user-123"
+        );
     }
 
     #[test]
