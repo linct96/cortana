@@ -11,6 +11,7 @@ import type {
   PendingConfirm,
   Profile,
   ResetCredits,
+  UsageRefreshResult,
 } from './types';
 
 export function useAccountManager(product: AccountProduct) {
@@ -38,23 +39,26 @@ export function useAccountManager(product: AccountProduct) {
   const refreshRequestRef = useRef(0);
   const oauthCleanupRef = useRef<(() => void) | null>(null);
 
-  const refresh = useCallback(async () => {
-    const request = ++refreshRequestRef.current;
-    try {
-      const next = await invoke<AppStatus>('get_app_status', { product });
-      if (request === refreshRequestRef.current) setStatus(next);
-    } catch (error) {
-      if (request === refreshRequestRef.current) toast.error(appError(error));
-    } finally {
-      if (request === refreshRequestRef.current) setLoading(false);
-    }
-  }, [product]);
+  const refresh = useCallback(
+    async (showError = true) => {
+      const request = ++refreshRequestRef.current;
+      try {
+        const next = await invoke<AppStatus>('get_app_status', { product });
+        if (request === refreshRequestRef.current) setStatus(next);
+      } catch (error) {
+        if (showError && request === refreshRequestRef.current) toast.error(appError(error));
+      } finally {
+        if (request === refreshRequestRef.current) setLoading(false);
+      }
+    },
+    [product],
+  );
 
   const refreshNewAccount = useCallback(
     async (profile: Profile) => {
       try {
         if (profile.accountType === 'oauth' && product !== 'claude') {
-          await invoke<Profile>('refresh_profile_usage', { profileId: profile.id });
+          await invoke<UsageRefreshResult>('refresh_profile_usage', { profileId: profile.id });
         }
       } catch (error) {
         toast.error(`账号已添加，但信息刷新失败：${appError(error)}`);
@@ -71,10 +75,18 @@ export function useAccountManager(product: AccountProduct) {
     setAddMode('browser');
     setQuotaProfileId(null);
     void refresh();
+    const statusTimer =
+      product === 'codex' ? window.setInterval(() => void refresh(false), 10_000) : undefined;
+    if (product === 'codex') {
+      void invoke('refresh_due_profile_usage', { immediate: true })
+        .then(() => refresh(false))
+        .catch(() => {});
+    }
     return () => {
+      if (statusTimer !== undefined) window.clearInterval(statusTimer);
       refreshRequestRef.current += 1;
     };
-  }, [refresh]);
+  }, [product, refresh]);
 
   const stopOAuthProgress = useCallback(() => {
     oauthCleanupRef.current?.();
@@ -150,14 +162,16 @@ export function useAccountManager(product: AccountProduct) {
     setBusy('refresh:all');
     const results = await Promise.allSettled(
       profiles.map((profile) =>
-        invoke<Profile>('refresh_profile_usage', { profileId: profile.id }),
+        invoke<UsageRefreshResult>('refresh_profile_usage', { profileId: profile.id }),
       ),
     );
     await refresh();
     const failed = results.filter((result) => result.status === 'rejected');
     if (failed.length)
       toast.error(`${failed.length} 个账户${product === 'claude' ? '令牌更新' : '信息刷新'}失败。`);
-    else toast.success(product === 'claude' ? '登录令牌已更新。' : '账户信息已刷新。');
+    else if (results.some((result) => result.status === 'fulfilled' && result.value.refreshed))
+      toast.success(product === 'claude' ? '登录令牌已更新。' : '账户信息已刷新。');
+    else toast.info('账户信息刚刚已刷新。');
     setBusy(null);
   }
 
@@ -169,12 +183,18 @@ export function useAccountManager(product: AccountProduct) {
     }
     setBusy(`refresh:${profile.id}`);
     try {
-      await invoke<Profile>('refresh_profile_usage', { profileId: profile.id });
-      toast.success(
-        product === 'claude'
-          ? `${profile.alias} 的登录令牌已更新。`
-          : `${profile.alias} 的账户信息已刷新。`,
-      );
+      const result = await invoke<UsageRefreshResult>('refresh_profile_usage', {
+        profileId: profile.id,
+      });
+      if (result.refreshed) {
+        toast.success(
+          product === 'claude'
+            ? `${profile.alias} 的登录令牌已更新。`
+            : `${profile.alias} 的账户信息已刷新。`,
+        );
+      } else {
+        toast.info(`${profile.alias} 的账户信息刚刚已刷新。`);
+      }
       await refresh();
     } catch (error) {
       toast.error(appError(error));

@@ -91,6 +91,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
               usage_secondary_resets_at INTEGER,
               antigravity_quota_json TEXT,
               usage_updated_at INTEGER,
+              usage_refresh_attempted_at INTEGER,
               reset_credits_available_count INTEGER,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL,
@@ -119,6 +120,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
         ("usage_secondary_resets_at", "INTEGER"),
         ("antigravity_quota_json", "TEXT"),
         ("usage_updated_at", "INTEGER"),
+        ("usage_refresh_attempted_at", "INTEGER"),
         ("reset_credits_available_count", "INTEGER"),
     ] {
         ensure_account_column(&connection, name, definition)?;
@@ -256,6 +258,34 @@ pub(super) fn set_setting(connection: &Connection, key: &str, value: &str) -> Re
         )
         .map_err(database_error)?;
     Ok(())
+}
+
+pub(super) fn set_usage_refresh_settings(
+    connection: &mut Connection,
+    enabled: bool,
+    active_interval_minutes: u64,
+    inactive_interval_minutes: u64,
+) -> Result<(), String> {
+    let transaction = connection.transaction().map_err(database_error)?;
+    for (key, value) in [
+        ("usage_refresh_enabled", enabled.to_string()),
+        (
+            "usage_refresh_active_interval_minutes",
+            active_interval_minutes.to_string(),
+        ),
+        (
+            "usage_refresh_inactive_interval_minutes",
+            inactive_interval_minutes.to_string(),
+        ),
+    ] {
+        transaction
+            .execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )
+            .map_err(database_error)?;
+    }
+    transaction.commit().map_err(database_error)
 }
 
 pub(super) fn set_web_access_settings(

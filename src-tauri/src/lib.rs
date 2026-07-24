@@ -185,6 +185,7 @@ pub fn run() {
                 pending_oauth: Arc::new(Mutex::new(None)),
             };
             db::initialize_database(&state)?;
+            accounts::start_usage_refresh_scheduler(state.clone());
             app.manage(state);
 
             local_web::initialize(app.handle())?;

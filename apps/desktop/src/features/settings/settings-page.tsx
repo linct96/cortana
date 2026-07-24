@@ -8,6 +8,14 @@ import { Button } from '../../components/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Field, FieldError } from '../../components/ui/field';
 import { Input } from '../../components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../components/ui/select';
 import { Switch } from '../../components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { appError } from '../../utils';
@@ -25,6 +33,21 @@ type WebAccessStatus = {
   error: string | null;
 };
 
+type UsageRefreshSettings = {
+  enabled: boolean;
+  activeIntervalMinutes: number;
+  inactiveIntervalMinutes: number;
+};
+
+const activeRefreshOptions = [1, 2, 5, 10].map((minutes) => ({
+  label: `${minutes} 分钟`,
+  value: String(minutes),
+}));
+const inactiveRefreshOptions = [5, 10, 30, 60].map((minutes) => ({
+  label: `${minutes} 分钟`,
+  value: String(minutes),
+}));
+
 export default function SettingsPage() {
   return (
     <PageShell>
@@ -36,19 +59,35 @@ export default function SettingsPage() {
 
 function SettingsContent() {
   const [status, setStatus] = useState<AppStatus | null>(null);
+  const [usageRefresh, setUsageRefresh] = useState<UsageRefreshSettings | null>(null);
   const [webPort, setWebPort] = useState('11456');
   const [webPortError, setWebPortError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>('loading');
 
   useEffect(() => {
-    invoke<AppStatus>('get_app_status')
-      .then((next) => {
-        setStatus(next);
-        setWebPort(String(next.webAccess.port));
+    Promise.all([
+      invoke<AppStatus>('get_app_status'),
+      invoke<UsageRefreshSettings>('get_usage_refresh_settings'),
+    ])
+      .then(([nextStatus, nextUsageRefresh]) => {
+        setStatus(nextStatus);
+        setUsageRefresh(nextUsageRefresh);
+        setWebPort(String(nextStatus.webAccess.port));
       })
       .catch((error) => toast.error(appError(error)))
       .finally(() => setBusy(null));
   }, []);
+
+  async function saveUsageRefresh(next: UsageRefreshSettings) {
+    setBusy('usage-refresh');
+    try {
+      setUsageRefresh(await invoke<UsageRefreshSettings>('set_usage_refresh_settings', next));
+    } catch (error) {
+      toast.error(appError(error));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function toggleAutostart(enabled: boolean) {
     setBusy('autostart');
@@ -125,6 +164,49 @@ function SettingsContent() {
                 disabled={busy === 'autostart' || busy === 'loading'}
               />
             </div>
+          </div>
+        </section>
+
+        <section aria-labelledby="usage-refresh-heading" className="flex flex-col gap-2">
+          <h2 id="usage-refresh-heading" className="px-1 text-sm font-medium text-foreground">
+            额度刷新
+          </h2>
+          <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4">
+              <div className="flex min-w-0 flex-col gap-1">
+                <h3 className="text-sm font-medium">自动刷新</h3>
+                <p className="text-sm text-muted-foreground">定期更新 Codex 账户额度</p>
+              </div>
+              <Switch
+                aria-label="自动刷新账户额度"
+                className="justify-self-end"
+                checked={usageRefresh?.enabled ?? false}
+                onCheckedChange={(enabled) =>
+                  usageRefresh && void saveUsageRefresh({ ...usageRefresh, enabled })
+                }
+                disabled={!usageRefresh || busy === 'usage-refresh' || busy === 'loading'}
+              />
+            </div>
+
+            <UsageRefreshIntervalRow
+              title="启用账号刷新间隔"
+              options={activeRefreshOptions}
+              value={usageRefresh?.activeIntervalMinutes}
+              disabled={!usageRefresh?.enabled || busy === 'usage-refresh' || busy === 'loading'}
+              onChange={(activeIntervalMinutes) =>
+                usageRefresh && void saveUsageRefresh({ ...usageRefresh, activeIntervalMinutes })
+              }
+            />
+
+            <UsageRefreshIntervalRow
+              title="未启用账号刷新间隔"
+              options={inactiveRefreshOptions}
+              value={usageRefresh?.inactiveIntervalMinutes}
+              disabled={!usageRefresh?.enabled || busy === 'usage-refresh' || busy === 'loading'}
+              onChange={(inactiveIntervalMinutes) =>
+                usageRefresh && void saveUsageRefresh({ ...usageRefresh, inactiveIntervalMinutes })
+              }
+            />
           </div>
         </section>
 
@@ -232,6 +314,45 @@ function SettingsContent() {
   );
 }
 
+function UsageRefreshIntervalRow({
+  title,
+  options,
+  value,
+  disabled,
+  onChange,
+}: {
+  title: string;
+  options: { label: string; value: string }[];
+  value?: number;
+  disabled: boolean;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4">
+      <h3 className="min-w-0 text-sm font-medium">{title}</h3>
+      <Select
+        items={options}
+        value={value === undefined ? null : String(value)}
+        onValueChange={(next) => next && onChange(Number(next))}
+        disabled={disabled}
+      >
+        <SelectTrigger className="w-32" aria-label={title}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 export function AboutPage() {
   return (
     <PageShell>
@@ -295,7 +416,7 @@ function AboutContent() {
         }
       />
       <div className="w-full px-4 pt-6 pb-10 sm:px-8 lg:px-12">
-        <section className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-3 md:grid-cols-2">
           <CliEnvironmentCard
             title="Codex CLI"
             environment={environments?.codex}

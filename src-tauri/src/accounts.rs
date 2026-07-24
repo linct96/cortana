@@ -8,6 +8,13 @@ use super::{
     *,
 };
 
+const USAGE_REFRESH_TICK: Duration = Duration::from_secs(10);
+const USAGE_REFRESH_MIN_INTERVAL_MILLIS: i64 = 10_000;
+const DEFAULT_ACTIVE_REFRESH_MINUTES: u64 = 1;
+const DEFAULT_INACTIVE_REFRESH_MINUTES: u64 = 5;
+const ACTIVE_REFRESH_MINUTES: [u64; 4] = [1, 2, 5, 10];
+const INACTIVE_REFRESH_MINUTES: [u64; 4] = [5, 10, 30, 60];
+
 #[tauri::command]
 pub(super) async fn get_app_status(
     app: tauri::AppHandle,
@@ -91,7 +98,9 @@ pub(super) async fn import_current_profile(
         };
         refresh_tray(&app)?;
         if profile.account_type == ACCOUNT_TYPE_OAUTH {
-            Ok(refresh_profile_usage_internal(&state, &profile.id).unwrap_or(profile))
+            Ok(refresh_codex_profile_usage_guarded(&state, &profile.id)
+                .map(|result| result.profile)
+                .unwrap_or(profile))
         } else {
             Ok(profile)
         }
@@ -146,7 +155,7 @@ pub(super) fn add_relay_profile(
 pub(super) async fn refresh_profile_usage(
     state: State<'_, AppState>,
     profile_id: String,
-) -> Result<ProfileSummary, String> {
+) -> Result<UsageRefreshResult, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let connection = open_database(&state)?;
@@ -160,10 +169,27 @@ pub(super) async fn refresh_profile_usage(
             .map_err(database_error)?
             .ok_or_else(|| "账户不存在。".to_string())?;
         match product.as_str() {
-            "codex" => refresh_profile_usage_internal(&state, &profile_id),
-            "claude" => claude::refresh_profile_usage(&state, &profile_id),
-            "antigravity" => antigravity::refresh_profile_usage(&state, &profile_id),
-            "grok" => grok::refresh_profile_usage(&state, &profile_id),
+            "codex" => refresh_codex_profile_usage_guarded(&state, &profile_id),
+            "claude" => claude::refresh_profile_usage(&state, &profile_id).map(|profile| {
+                UsageRefreshResult {
+                    profile,
+                    refreshed: true,
+                }
+            }),
+            "antigravity" => {
+                antigravity::refresh_profile_usage(&state, &profile_id).map(|profile| {
+                    UsageRefreshResult {
+                        profile,
+                        refreshed: true,
+                    }
+                })
+            }
+            "grok" => {
+                grok::refresh_profile_usage(&state, &profile_id).map(|profile| UsageRefreshResult {
+                    profile,
+                    refreshed: true,
+                })
+            }
             _ => Err("不支持该账户类型。".to_string()),
         }
     })
@@ -382,7 +408,11 @@ pub(super) fn set_codex_home(
 }
 
 pub(super) fn get_active_product(state: State<'_, AppState>) -> Result<AccountProduct, String> {
-    let connection = open_database(&state)?;
+    active_product(state.inner())
+}
+
+fn active_product(state: &AppState) -> Result<AccountProduct, String> {
+    let connection = open_database(state)?;
     Ok(
         match get_setting(&connection, "active_product")?.as_deref() {
             Some("claude") => AccountProduct::Claude,
@@ -391,6 +421,65 @@ pub(super) fn get_active_product(state: State<'_, AppState>) -> Result<AccountPr
             _ => AccountProduct::Codex,
         },
     )
+}
+
+pub(super) fn get_usage_refresh_settings(
+    state: State<'_, AppState>,
+) -> Result<UsageRefreshSettings, String> {
+    usage_refresh_settings(&state)
+}
+
+pub(super) fn set_usage_refresh_settings(
+    state: State<'_, AppState>,
+    enabled: bool,
+    active_interval_minutes: u64,
+    inactive_interval_minutes: u64,
+) -> Result<UsageRefreshSettings, String> {
+    if !ACTIVE_REFRESH_MINUTES.contains(&active_interval_minutes) {
+        return Err("启用账号刷新间隔无效。".to_string());
+    }
+    if !INACTIVE_REFRESH_MINUTES.contains(&inactive_interval_minutes) {
+        return Err("未启用账号刷新间隔无效。".to_string());
+    }
+    let mut connection = open_database(&state)?;
+    db::set_usage_refresh_settings(
+        &mut connection,
+        enabled,
+        active_interval_minutes,
+        inactive_interval_minutes,
+    )?;
+    Ok(UsageRefreshSettings {
+        enabled,
+        active_interval_minutes,
+        inactive_interval_minutes,
+    })
+}
+
+#[tauri::command]
+pub(super) async fn refresh_due_profile_usage(
+    state: State<'_, AppState>,
+    immediate: bool,
+) -> Result<UsageRefreshRunResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        refresh_due_profile_usage_internal(&state, immediate)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(super) fn start_usage_refresh_scheduler(state: AppState) {
+    thread::spawn(move || {
+        if let Err(error) = refresh_due_profile_usage_internal(&state, true) {
+            eprintln!("Unable to refresh account usage: {error}");
+        }
+        loop {
+            thread::sleep(USAGE_REFRESH_TICK);
+            if let Err(error) = refresh_due_profile_usage_internal(&state, false) {
+                eprintln!("Unable to refresh account usage: {error}");
+            }
+        }
+    });
 }
 
 pub(super) fn set_active_product(
@@ -1010,6 +1099,176 @@ pub(super) struct AccountUsage {
     pub(super) secondary: Option<UsageWindow>,
 }
 
+fn usage_refresh_settings(state: &AppState) -> Result<UsageRefreshSettings, String> {
+    let connection = open_database(state)?;
+    let enabled = get_setting(&connection, "usage_refresh_enabled")?
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(true);
+    let active_interval_minutes = refresh_interval_setting(
+        &connection,
+        "usage_refresh_active_interval_minutes",
+        &ACTIVE_REFRESH_MINUTES,
+        DEFAULT_ACTIVE_REFRESH_MINUTES,
+    )?;
+    let inactive_interval_minutes = refresh_interval_setting(
+        &connection,
+        "usage_refresh_inactive_interval_minutes",
+        &INACTIVE_REFRESH_MINUTES,
+        DEFAULT_INACTIVE_REFRESH_MINUTES,
+    )?;
+    Ok(UsageRefreshSettings {
+        enabled,
+        active_interval_minutes,
+        inactive_interval_minutes,
+    })
+}
+
+fn refresh_interval_setting(
+    connection: &Connection,
+    key: &str,
+    allowed: &[u64],
+    default: u64,
+) -> Result<u64, String> {
+    Ok(get_setting(connection, key)?
+        .and_then(|value| value.parse().ok())
+        .filter(|value| allowed.contains(value))
+        .unwrap_or(default))
+}
+
+fn refresh_due_profile_usage_internal(
+    state: &AppState,
+    immediate: bool,
+) -> Result<UsageRefreshRunResult, String> {
+    let settings = usage_refresh_settings(state)?;
+    if !settings.enabled || active_product(state)? != AccountProduct::Codex {
+        return Ok(UsageRefreshRunResult::default());
+    }
+
+    let profile_ids = due_codex_profile_ids(state, settings, immediate)?;
+    let mut result = UsageRefreshRunResult::default();
+    for profile_id in profile_ids {
+        match refresh_codex_profile_usage_guarded(state, &profile_id) {
+            Ok(refresh) if refresh.refreshed => result.refreshed_count += 1,
+            Ok(_) => result.skipped_count += 1,
+            Err(error) => {
+                result.failed_count += 1;
+                eprintln!("Unable to refresh Codex account {profile_id}: {error}");
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn due_codex_profile_ids(
+    state: &AppState,
+    settings: UsageRefreshSettings,
+    immediate: bool,
+) -> Result<Vec<String>, String> {
+    let connection = open_database(state)?;
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
+    let now = now_millis();
+    let rows = connection
+        .prepare(
+            "SELECT id, MAX(COALESCE(usage_refresh_attempted_at, 0), COALESCE(usage_updated_at, 0))
+             FROM accounts
+             WHERE product = 'codex' AND account_type = 'oauth'",
+        )
+        .map_err(database_error)?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(profile_id, last_refresh)| {
+            usage_refresh_due(
+                now,
+                last_refresh,
+                active_id.as_deref() == Some(profile_id.as_str()),
+                settings,
+                immediate,
+            )
+            .then_some(profile_id)
+        })
+        .collect())
+}
+
+fn usage_refresh_due(
+    now: i64,
+    last_refresh: i64,
+    active: bool,
+    settings: UsageRefreshSettings,
+    immediate: bool,
+) -> bool {
+    let interval_millis = if immediate {
+        USAGE_REFRESH_MIN_INTERVAL_MILLIS
+    } else if active {
+        settings.active_interval_minutes as i64 * 60_000
+    } else {
+        settings.inactive_interval_minutes as i64 * 60_000
+    };
+    now.saturating_sub(last_refresh) >= interval_millis
+}
+
+fn claim_codex_usage_refresh(
+    connection: &Connection,
+    profile_id: &str,
+    now: i64,
+) -> Result<bool, String> {
+    connection
+        .execute(
+            "UPDATE accounts
+             SET usage_refresh_attempted_at = ?1
+             WHERE id = ?2
+               AND product = 'codex'
+               AND account_type = 'oauth'
+               AND MAX(COALESCE(usage_refresh_attempted_at, 0), COALESCE(usage_updated_at, 0)) <= ?3",
+            params![
+                now,
+                profile_id,
+                now.saturating_sub(USAGE_REFRESH_MIN_INTERVAL_MILLIS)
+            ],
+        )
+        .map(|changed| changed == 1)
+        .map_err(database_error)
+}
+
+fn refresh_codex_profile_usage_guarded(
+    state: &AppState,
+    profile_id: &str,
+) -> Result<UsageRefreshResult, String> {
+    let connection = open_database(state)?;
+    let now = now_millis();
+    if !claim_codex_usage_refresh(&connection, profile_id, now)? {
+        let account_type = connection
+            .query_row(
+                "SELECT account_type FROM accounts WHERE id = ?1 AND product = 'codex'",
+                params![profile_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(database_error)?
+            .ok_or_else(|| "账户不存在。".to_string())?;
+        if account_type == ACCOUNT_TYPE_RELAY {
+            return Err("中转站账户不支持额度查询。".to_string());
+        }
+        let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
+        return Ok(UsageRefreshResult {
+            profile: get_profile_summary(&connection, profile_id, active_id.as_deref())?,
+            refreshed: false,
+        });
+    }
+    drop(connection);
+
+    Ok(UsageRefreshResult {
+        profile: refresh_profile_usage_internal(state, profile_id)?,
+        refreshed: true,
+    })
+}
+
 pub(super) fn refresh_profile_usage_internal(
     state: &AppState,
     profile_id: &str,
@@ -1279,6 +1538,69 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    #[test]
+    fn keeps_refresh_intervals_independent_and_throttles_codex_requests() {
+        let directory =
+            std::env::temp_dir().join(format!("cortana-refresh-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let state = AppState {
+            database_path: directory.join("app.sqlite3"),
+            default_codex_home: directory.clone(),
+            pending_oauth: Arc::new(Mutex::new(None)),
+        };
+        initialize_database(&state).unwrap();
+        let mut connection = open_database(&state).unwrap();
+        db::set_usage_refresh_settings(&mut connection, true, 10, 5).unwrap();
+        assert_eq!(
+            usage_refresh_settings(&state)
+                .unwrap()
+                .active_interval_minutes,
+            10
+        );
+        assert_eq!(
+            usage_refresh_settings(&state)
+                .unwrap()
+                .inactive_interval_minutes,
+            5
+        );
+
+        connection
+            .execute(
+                "INSERT INTO accounts (id, product, account_type, alias, auth_json, created_at, updated_at)
+                 VALUES ('oauth', 'codex', 'oauth', 'OAuth', '{}', 1, 1),
+                        ('relay', 'codex', 'relay', 'Relay', '{}', 1, 1)",
+                [],
+            )
+            .unwrap();
+        let now = 1_000_000;
+        assert!(claim_codex_usage_refresh(&connection, "oauth", now).unwrap());
+        assert!(!claim_codex_usage_refresh(&connection, "oauth", now + 9_999).unwrap());
+        assert!(claim_codex_usage_refresh(&connection, "oauth", now + 10_000).unwrap());
+        assert!(!claim_codex_usage_refresh(&connection, "relay", now).unwrap());
+
+        let settings = usage_refresh_settings(&state).unwrap();
+        assert!(!usage_refresh_due(
+            now,
+            now - 599_999,
+            true,
+            settings,
+            false
+        ));
+        assert!(usage_refresh_due(now, now - 600_000, true, settings, false));
+        assert!(usage_refresh_due(
+            now,
+            now - 300_000,
+            false,
+            settings,
+            false
+        ));
+        assert!(!usage_refresh_due(now, now - 9_999, false, settings, true));
+        assert!(usage_refresh_due(now, now - 10_000, false, settings, true));
+
+        drop(connection);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
