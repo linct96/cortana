@@ -908,10 +908,9 @@ mod tests {
 
     #[test]
     fn parses_antigravity_workspace_and_timestamp() {
-        assert_eq!(
-            workspace_path(r#"["file:///tmp/project"]"#).as_deref(),
-            Some("/tmp/project")
-        );
+        let project = std::env::temp_dir().join("project");
+        let uri = serde_json::to_string(&vec![Url::from_file_path(&project).unwrap()]).unwrap();
+        assert_eq!(workspace_path(&uri).as_deref(), project.to_str());
         assert!(parse_antigravity_timestamp("2026-07-15 03:30:03.720555+00:00").unwrap() > 0);
     }
 
@@ -932,12 +931,17 @@ mod tests {
                     source TEXT,
                     nesting_depth INTEGER,
                     killed INTEGER
-                 );
-                 INSERT INTO conversation_summaries VALUES
-                    ('top', '', 'Visible', '2026-07-15 03:30:03+00:00',
-                     '[\"file:///tmp/project\"]', '', 0, 0),
-                    ('nested', '', 'Hidden', '2026-07-15 03:30:03+00:00',
-                     '[]', '', 1, 0);",
+                 );",
+            )
+            .unwrap();
+        let project = std::env::temp_dir().join("project");
+        let uri = serde_json::to_string(&vec![Url::from_file_path(&project).unwrap()]).unwrap();
+        connection
+            .execute(
+                "INSERT INTO conversation_summaries VALUES
+                    ('top', '', 'Visible', '2026-07-15 03:30:03+00:00', ?1, '', 0, 0),
+                    ('nested', '', 'Hidden', '2026-07-15 03:30:03+00:00', '[]', '', 1, 0)",
+                params![uri],
             )
             .unwrap();
         drop(connection);
@@ -945,7 +949,7 @@ mod tests {
         let sessions = list_antigravity_sessions_at(&path).unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "top");
-        assert_eq!(sessions[0].cwd.as_deref(), Some("/tmp/project"));
+        assert_eq!(sessions[0].cwd.as_deref(), project.to_str());
         fs::remove_dir_all(root).unwrap();
     }
 }
