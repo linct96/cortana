@@ -360,7 +360,11 @@ fn parse_claude(default_home: PathBuf, start_date: Option<NaiveDate>) -> ParsedU
             };
             let session_id = record["sessionId"]
                 .as_str()
-                .filter(|_| !path.to_string_lossy().contains("/subagents/"))
+                .filter(|_| {
+                    !path
+                        .components()
+                        .any(|part| part.as_os_str() == "subagents")
+                })
                 .unwrap_or(&top_session)
                 .to_string();
             let usage = UsageRecord {
