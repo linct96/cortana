@@ -1,5 +1,11 @@
 use super::{
-    antigravity, claude, codex::*, db::*, grok, oauth::identity_from_auth_json, tray::*, *,
+    antigravity, claude,
+    codex::*,
+    db::*,
+    grok,
+    oauth::{chatgpt_user_id_from_auth_json, identity_from_auth_json},
+    tray::*,
+    *,
 };
 
 #[tauri::command]
@@ -617,17 +623,42 @@ pub(super) fn profile_id_for_auth(
             .optional()
             .map_err(database_error);
     }
-    let Ok(refresh_token) = extract_refresh_token(auth_json) else {
+    let Ok(auth) = serde_json::from_str(auth_json) else {
         return Ok(None);
     };
-    connection
-        .query_row(
-            "SELECT id FROM accounts WHERE product = 'codex' AND account_type = 'oauth' AND trim(COALESCE(json_extract(auth_json, '$.tokens.refresh_token'), '')) = ?1 LIMIT 1",
-            params![refresh_token],
-            |row| row.get(0),
+    let identity = identity_from_auth_json(&auth);
+    let user_id = chatgpt_user_id_from_auth_json(&auth);
+    Ok(find_codex_oauth_profile(connection, &identity.account_id, &user_id)?.map(|(id, _, _)| id))
+}
+
+fn find_codex_oauth_profile(
+    connection: &Connection,
+    account_id: &str,
+    user_id: &str,
+) -> Result<Option<(String, String, String)>, String> {
+    if account_id.is_empty() || user_id.is_empty() {
+        return Ok(None);
+    }
+    let profiles = connection
+        .prepare(
+            "SELECT id, alias, email FROM accounts WHERE product = 'codex' AND account_type = 'oauth' AND account_id = ?1 AND chatgpt_user_id = ?2 LIMIT 2",
         )
-        .optional()
-        .map_err(database_error)
+        .map_err(database_error)?
+        .query_map(params![account_id, user_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    match profiles.as_slice() {
+        [] => Ok(None),
+        [profile] => Ok(Some(profile.clone())),
+        _ => Err("检测到重复的 Codex 账号档案，请先删除重复账号。".to_string()),
+    }
 }
 
 pub(super) fn resolve_auth_state(
@@ -736,6 +767,10 @@ pub(super) fn update_profile_internal(
         serde_json::to_string_pretty(&parsed).map_err(|error| error.to_string())?;
 
     let mut identity = identity_from_auth_json(&parsed);
+    let user_id = chatgpt_user_id_from_auth_json(&parsed);
+    if identity.account_id.is_empty() || user_id.is_empty() {
+        return Err("auth.json 缺少 Codex 账号或用户标识，请重新授权。".to_string());
+    }
     let mut connection = open_database(state)?;
     let (existing_email, account_type) = connection
         .query_row(
@@ -748,6 +783,11 @@ pub(super) fn update_profile_internal(
         .ok_or_else(|| "账户不存在。".to_string())?;
     if account_type != ACCOUNT_TYPE_OAUTH {
         return Err("中转站账户请使用中转站编辑表单。".to_string());
+    }
+    if find_codex_oauth_profile(&connection, &identity.account_id, &user_id)?
+        .is_some_and(|(id, _, _)| id != profile_id)
+    {
+        return Err("该 Codex 账号已存在。".to_string());
     }
     if identity.email.is_empty() {
         identity.email = existing_email;
@@ -763,8 +803,8 @@ pub(super) fn update_profile_internal(
         let transaction = connection.transaction().map_err(database_error)?;
         let changed = transaction
             .execute(
-                "UPDATE accounts SET account_id = ?1, email = ?2, alias = ?3, plan_type = CASE WHEN ?4 = '' THEN plan_type ELSE ?4 END, auth_json = ?5, updated_at = ?6 WHERE id = ?7 AND product = 'codex'",
-                params![identity.account_id, identity.email, alias, identity.plan_type, formatted_auth_json, now_millis(), profile_id],
+                "UPDATE accounts SET account_id = ?1, chatgpt_user_id = ?2, email = ?3, alias = ?4, plan_type = CASE WHEN ?5 = '' THEN plan_type ELSE ?5 END, auth_json = ?6, updated_at = ?7 WHERE id = ?8 AND product = 'codex'",
+                params![identity.account_id, user_id, identity.email, alias, identity.plan_type, formatted_auth_json, now_millis(), profile_id],
             )
             .map_err(database_error)?;
         if changed == 0 {
@@ -792,17 +832,14 @@ pub(super) fn upsert_profile_from_auth(
     if !parsed.is_object() {
         return Err("auth.json 必须是一个 JSON 对象。".to_string());
     }
-    let refresh_token = extract_refresh_token(auth_json)?;
+    extract_refresh_token(auth_json)?;
     let identity = identity_from_auth_json(&parsed);
+    let user_id = chatgpt_user_id_from_auth_json(&parsed);
+    if identity.account_id.is_empty() || user_id.is_empty() {
+        return Err("auth.json 缺少 Codex 账号或用户标识，请重新授权。".to_string());
+    }
     let connection = open_database(state)?;
-    let existing = connection
-        .query_row(
-            "SELECT id, alias, email FROM accounts WHERE product = 'codex' AND account_type = 'oauth' AND trim(COALESCE(json_extract(auth_json, '$.tokens.refresh_token'), '')) = ?1 LIMIT 1",
-            params![refresh_token],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
-        )
-        .optional()
-        .map_err(database_error)?;
+    let existing = find_codex_oauth_profile(&connection, &identity.account_id, &user_id)?;
     let now = now_millis();
     let id = if let Some((id, existing_alias, existing_email)) = existing {
         let alias = if requested_alias.is_empty() {
@@ -816,8 +853,8 @@ pub(super) fn upsert_profile_from_auth(
         };
         connection
             .execute(
-                "UPDATE accounts SET account_type = 'oauth', api_base_url = NULL, account_id = ?1, email = ?2, alias = ?3, plan_type = CASE WHEN ?4 = '' THEN plan_type ELSE ?4 END, auth_json = ?5, updated_at = ?6 WHERE id = ?7 AND product = 'codex'",
-                params![identity.account_id, identity.email, alias, identity.plan_type, auth_json, now, id],
+                "UPDATE accounts SET account_type = 'oauth', api_base_url = NULL, account_id = ?1, chatgpt_user_id = ?2, email = ?3, alias = ?4, plan_type = CASE WHEN ?5 = '' THEN plan_type ELSE ?5 END, auth_json = ?6, updated_at = ?7 WHERE id = ?8 AND product = 'codex'",
+                params![identity.account_id, user_id, identity.email, alias, identity.plan_type, auth_json, now, id],
             )
             .map_err(database_error)?;
         id
@@ -826,8 +863,8 @@ pub(super) fn upsert_profile_from_auth(
         let alias = oauth_alias(requested_alias, &identity);
         connection
             .execute(
-                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'codex', 'oauth', NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?7, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'codex'), 0))",
-                params![id, identity.account_id, identity.email, alias, identity.plan_type, auth_json, now],
+                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, chatgpt_user_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'codex', 'oauth', NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'codex'), 0))",
+                params![id, identity.account_id, user_id, identity.email, alias, identity.plan_type, auth_json, now],
             )
             .map_err(database_error)?;
         id
@@ -1212,6 +1249,37 @@ pub(super) fn usage_window_from_value(value: &Value) -> Option<UsageWindow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+
+    fn oauth_auth(
+        account_id: &str,
+        user_id: &str,
+        refresh_token: &str,
+        access_token: &str,
+    ) -> String {
+        let encode = |value: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value);
+        let claims = json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": account_id,
+                "chatgpt_user_id": user_id
+            }
+        });
+        let id_token = format!(
+            "{}.{}.{}",
+            encode(br#"{"alg":"none","typ":"JWT"}"#),
+            encode(claims.to_string().as_bytes()),
+            encode(b"signature")
+        );
+        json!({
+            "tokens": {
+                "account_id": account_id,
+                "id_token": id_token,
+                "access_token": access_token,
+                "refresh_token": refresh_token
+            }
+        })
+        .to_string()
+    }
 
     #[test]
     fn isolates_accounts_by_product() {
@@ -1226,7 +1294,12 @@ mod tests {
         initialize_database(&state).unwrap();
         upsert_profile_from_auth(
             &state,
-            r#"{"tokens":{"refresh_token":"codex-refresh"}}"#,
+            &oauth_auth(
+                "codex-account",
+                "codex-user",
+                "codex-refresh",
+                "codex-access",
+            ),
             "Codex",
         )
         .unwrap();
@@ -1273,13 +1346,18 @@ mod tests {
         initialize_database(&state).unwrap();
         let target = upsert_profile_from_auth(
             &state,
-            r#"{"tokens":{"refresh_token":"target-rt"}}"#,
+            &oauth_auth("target-account", "target-user", "target-rt", "target-at"),
             "target",
         )
         .unwrap();
         write_auth_json_atomically(
             &directory.join("auth.json"),
-            r#"{"tokens":{"refresh_token":"external-rt"}}"#,
+            &oauth_auth(
+                "external-account",
+                "external-user",
+                "external-rt",
+                "external-at",
+            ),
         )
         .unwrap();
         assert!(switch_profile_internal(&state, &target.id, false)
@@ -1300,7 +1378,7 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
-    fn profiles_are_deduplicated_by_refresh_token_not_account_id() {
+    fn profiles_are_deduplicated_by_account_and_user_identity() {
         let directory =
             std::env::temp_dir().join(format!("codex-switcher-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&directory).unwrap();
@@ -1310,22 +1388,35 @@ mod tests {
             pending_oauth: Arc::new(Mutex::new(None)),
         };
         initialize_database(&state).unwrap();
-        let auth = |refresh_token: &str| {
-            json!({
-                "tokens": {
-                    "account_id": "shared-account-id",
-                    "refresh_token": refresh_token
-                }
-            })
-            .to_string()
-        };
+        let first = upsert_profile_from_auth(
+            &state,
+            &oauth_auth("shared-account", "user-1", "rt-1", "at-1"),
+            "first",
+        )
+        .unwrap();
+        let updated = upsert_profile_from_auth(
+            &state,
+            &oauth_auth("shared-account", "user-1", "rt-2", "at-2"),
+            "updated",
+        )
+        .unwrap();
+        let other_user = upsert_profile_from_auth(
+            &state,
+            &oauth_auth("shared-account", "user-2", "rt-3", "at-3"),
+            "other",
+        )
+        .unwrap();
 
-        let first = upsert_profile_from_auth(&state, &auth("rt-1"), "first").unwrap();
-        let second = upsert_profile_from_auth(&state, &auth("rt-2"), "second").unwrap();
-        let updated = upsert_profile_from_auth(&state, &auth("rt-1"), "updated").unwrap();
-
-        assert_ne!(first.id, second.id);
         assert_eq!(first.id, updated.id);
+        assert_ne!(first.id, other_user.id);
+        assert!(update_profile_internal(
+            &state,
+            &other_user.id,
+            "duplicate",
+            &oauth_auth("shared-account", "user-1", "rt-4", "at-4"),
+        )
+        .unwrap_err()
+        .contains("已存在"));
         assert_eq!(
             list_profiles(&open_database(&state).unwrap(), None)
                 .unwrap()
@@ -1335,7 +1426,7 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
     #[test]
-    fn matches_current_oauth_by_refresh_token() {
+    fn matches_current_oauth_after_token_rotation() {
         let directory =
             std::env::temp_dir().join(format!("cortana-auth-match-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&directory).unwrap();
@@ -1347,13 +1438,13 @@ mod tests {
         initialize_database(&state).unwrap();
         let profile = upsert_profile_from_auth(
             &state,
-            r#"{"tokens":{"refresh_token":"same-rt","access_token":"old"}}"#,
+            &oauth_auth("same-account", "same-user", "old-rt", "old-at"),
             "OAuth",
         )
         .unwrap();
         write_auth_json_atomically(
             &directory.join("auth.json"),
-            r#"{"tokens":{"refresh_token":"same-rt","access_token":"new"}}"#,
+            &oauth_auth("same-account", "same-user", "new-rt", "new-at"),
         )
         .unwrap();
 
@@ -1368,7 +1459,7 @@ mod tests {
         assert!(
             get_profile_auth_json(&open_database(&state).unwrap(), &profile.id)
                 .unwrap()
-                .contains("new")
+                .contains("new-rt")
         );
         fs::remove_dir_all(directory).unwrap();
     }
@@ -1414,18 +1505,20 @@ mod tests {
             pending_oauth: Arc::new(Mutex::new(None)),
         };
         initialize_database(&state).unwrap();
-        let profile =
-            upsert_profile_from_auth(&state, r#"{"tokens":{"refresh_token":"old"}}"#, "旧名称")
-                .unwrap();
+        let profile = upsert_profile_from_auth(
+            &state,
+            &oauth_auth("edit-account", "edit-user", "old-rt", "old-at"),
+            "旧名称",
+        )
+        .unwrap();
         switch_profile_internal(&state, &profile.id, true).unwrap();
-        let updated_auth = r#"{ "tokens": { "refresh_token": "new" } }"#;
-        let formatted_auth = r#"{
-  "tokens": {
-    "refresh_token": "new"
-  }
-}"#;
+        let updated_auth = oauth_auth("edit-account", "edit-user", "new-rt", "new-at");
+        let formatted_auth =
+            serde_json::to_string_pretty(&serde_json::from_str::<Value>(&updated_auth).unwrap())
+                .unwrap();
 
-        let updated = update_profile_internal(&state, &profile.id, "新名称", updated_auth).unwrap();
+        let updated =
+            update_profile_internal(&state, &profile.id, "新名称", &updated_auth).unwrap();
 
         assert_eq!(updated.alias, "新名称");
         assert_eq!(
@@ -1511,7 +1604,7 @@ mod tests {
 
         let oauth = upsert_profile_from_auth(
             &state,
-            r#"{"tokens":{"refresh_token":"oauth-rt"}}"#,
+            &oauth_auth("oauth-account", "oauth-user", "oauth-rt", "oauth-at"),
             "OAuth",
         )
         .unwrap();

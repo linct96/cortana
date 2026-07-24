@@ -78,6 +78,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
               account_type TEXT NOT NULL DEFAULT 'oauth',
               api_base_url TEXT,
               account_id TEXT NOT NULL DEFAULT '',
+              chatgpt_user_id TEXT NOT NULL DEFAULT '',
               email TEXT NOT NULL DEFAULT '',
               alias TEXT NOT NULL,
               plan_type TEXT NOT NULL DEFAULT '',
@@ -108,6 +109,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
         ("product", "TEXT NOT NULL DEFAULT 'codex'"),
         ("account_type", "TEXT NOT NULL DEFAULT 'oauth'"),
         ("api_base_url", "TEXT"),
+        ("chatgpt_user_id", "TEXT NOT NULL DEFAULT ''"),
         ("plan_type", "TEXT NOT NULL DEFAULT ''"),
         ("usage_primary_percent", "REAL"),
         ("usage_primary_window_minutes", "INTEGER"),
@@ -149,6 +151,13 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
         }
         transaction.commit().map_err(database_error)?;
     }
+    backfill_codex_user_ids(&connection)?;
+    connection
+        .execute(
+            "CREATE INDEX IF NOT EXISTS accounts_codex_identity_idx ON accounts(product, account_type, account_id, chatgpt_user_id)",
+            [],
+        )
+        .map_err(database_error)?;
     connection
         .execute(
             "DELETE FROM settings WHERE key IN ('profile_order', 'active_profile_id', 'active_agents_profile_id')",
@@ -160,6 +169,35 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&state.database_path, fs::Permissions::from_mode(0o600))
             .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn backfill_codex_user_ids(connection: &Connection) -> Result<(), String> {
+    let rows = connection
+        .prepare(
+            "SELECT id, auth_json FROM accounts WHERE product = 'codex' AND account_type = 'oauth' AND chatgpt_user_id = ''",
+        )
+        .map_err(database_error)?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(database_error)?;
+    for (id, auth_json) in rows {
+        let Ok(auth) = serde_json::from_str(&auth_json) else {
+            continue;
+        };
+        let user_id = oauth::chatgpt_user_id_from_auth_json(&auth);
+        if !user_id.is_empty() {
+            connection
+                .execute(
+                    "UPDATE accounts SET chatgpt_user_id = ?1 WHERE id = ?2",
+                    params![user_id, id],
+                )
+                .map_err(database_error)?;
+        }
     }
     Ok(())
 }
@@ -244,6 +282,7 @@ pub(super) fn set_web_access_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
 
     #[test]
     fn saves_web_access_settings_together() {
@@ -262,6 +301,55 @@ mod tests {
             get_setting(&connection, "web_access_port").unwrap(),
             Some("11456".to_string())
         );
+    }
+
+    #[test]
+    fn backfills_codex_user_id_from_saved_auth() {
+        let directory =
+            std::env::temp_dir().join(format!("cortana-db-user-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let state = AppState {
+            database_path: directory.join("app.sqlite3"),
+            default_codex_home: directory.clone(),
+            pending_oauth: Arc::new(Mutex::new(None)),
+        };
+        initialize_database(&state).unwrap();
+        let encode = |value: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value);
+        let claims = json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "account-1",
+                "chatgpt_user_id": "user-1"
+            }
+        });
+        let id_token = format!(
+            "{}.{}.{}",
+            encode(br#"{"alg":"none","typ":"JWT"}"#),
+            encode(claims.to_string().as_bytes()),
+            encode(b"signature")
+        );
+        let auth_json = json!({"tokens": {"id_token": id_token}}).to_string();
+        open_database(&state)
+            .unwrap()
+            .execute(
+                "INSERT INTO accounts (id, product, account_type, account_id, alias, auth_json, created_at, updated_at) VALUES ('legacy', 'codex', 'oauth', 'account-1', 'Legacy', ?1, 1, 1)",
+                params![auth_json],
+            )
+            .unwrap();
+
+        initialize_database(&state).unwrap();
+
+        assert_eq!(
+            open_database(&state)
+                .unwrap()
+                .query_row(
+                    "SELECT chatgpt_user_id FROM accounts WHERE id = 'legacy'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "user-1"
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -307,6 +395,7 @@ mod tests {
 
         let connection = open_database(&state).unwrap();
         assert!(account_column_exists(&connection, "product").unwrap());
+        assert!(account_column_exists(&connection, "chatgpt_user_id").unwrap());
         assert!(!account_column_exists(&connection, "credits_balance").unwrap());
         assert!(!account_column_exists(&connection, "credits_unlimited").unwrap());
         assert!(!account_column_exists(&connection, "auth_hash").unwrap());
