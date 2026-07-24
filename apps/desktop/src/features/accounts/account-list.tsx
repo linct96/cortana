@@ -213,7 +213,7 @@ export function AccountBalance({
       <UsageProgressList
         items={windows.map((window, index) => ({
           key: String(window.windowMinutes ?? index),
-          label: window.resetsAt ? `${formatResetTime(window.resetsAt)}重置` : '剩余额度',
+          label: window.resetsAt ? formatResetTime(window.resetsAt) : '剩余额度',
           remainingPercent: remainingPercent(window),
           resetsAt: null,
         }))}
@@ -253,7 +253,7 @@ export function UsageProgressList({
         >
           <ProgressLabel>
             {item.label}
-            {item.resetsAt ? ` · ${formatResetTime(item.resetsAt)}重置` : ''}
+            {item.resetsAt ? ` · ${formatResetTime(item.resetsAt)}` : ''}
           </ProgressLabel>
           <ProgressValue />
         </Progress>
@@ -331,7 +331,7 @@ function AccountMeta({ profile, onViewQuota }: { profile: Profile; onViewQuota: 
         destructive: remaining <= 10,
       });
       if (window.resetsAt !== null) {
-        items.push({ key: `reset-${index}`, label: `${formatResetTime(window.resetsAt)}重置` });
+        items.push({ key: `reset-${index}`, label: formatResetTime(window.resetsAt) });
       }
     });
     if (profile.resetCreditsAvailableCount !== null) {

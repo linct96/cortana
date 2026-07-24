@@ -13,17 +13,13 @@ export function appError(error: unknown) {
       : '操作没有完成。';
 }
 
-export function formatResetTime(value: number) {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    })
-      .formatToParts(value)
-      .map(({ type, value }) => [type, value]),
-  );
-  return `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+export function formatResetTime(value: number, now = Date.now()) {
+  const totalMinutes = Math.max(0, Math.ceil((value - now) / 60_000));
+  const days = Math.floor(totalMinutes / 1_440);
+  const hours = Math.floor((totalMinutes % 1_440) / 60);
+  const minutes = totalMinutes % 60;
+
+  if (days) return `重置于${days}天${hours}时`;
+  if (hours) return `重置于${hours}时${minutes}分`;
+  return `重置于${minutes}分`;
 }
