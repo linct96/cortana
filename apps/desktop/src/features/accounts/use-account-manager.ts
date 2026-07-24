@@ -254,6 +254,18 @@ export function useAccountManager(product: AccountProduct) {
     }
   }
 
+  async function openCli(profile: Profile) {
+    setBusy(`open-cli:${profile.id}`);
+    try {
+      await invoke('open_codex_cli_with_profile', { profileId: profile.id });
+      toast.success(`已使用 ${profile.alias} 打开 Codex CLI。`);
+    } catch (error) {
+      toast.error(appError(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function importCurrent() {
     setBusy('import');
     try {
@@ -441,6 +453,7 @@ export function useAccountManager(product: AccountProduct) {
     refreshAccount,
     viewResetCredits,
     switchTo,
+    openCli,
     importCurrent,
     submitAdd,
     openEditor,

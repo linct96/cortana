@@ -3,7 +3,10 @@ use super::{
     codex::*,
     db::*,
     grok,
-    oauth::{chatgpt_user_id_from_auth_json, identity_from_auth_json},
+    oauth::{
+        build_codex_auth_json, chatgpt_user_id_from_auth_json, decode_jwt_claims,
+        identity_from_auth_json, refresh_oauth_token,
+    },
     tray::*,
     *,
 };
@@ -14,6 +17,8 @@ const DEFAULT_ACTIVE_REFRESH_MINUTES: u64 = 1;
 const DEFAULT_INACTIVE_REFRESH_MINUTES: u64 = 5;
 const ACTIVE_REFRESH_MINUTES: [u64; 4] = [1, 2, 5, 10];
 const INACTIVE_REFRESH_MINUTES: [u64; 4] = [5, 10, 30, 60];
+const CODEX_CLI_TOKEN_REFRESH_BUFFER_SECONDS: i64 = 60 * 60;
+const CODEX_RELAY_API_KEY_ENV: &str = "CORTANA_CODEX_RELAY_API_KEY";
 
 #[tauri::command]
 pub(super) async fn get_app_status(
@@ -53,6 +58,153 @@ pub(super) async fn switch_profile(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(super) async fn open_codex_cli_with_profile(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        open_codex_cli_with_profile_internal(&state, &profile_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn open_codex_cli_with_profile_internal(state: &AppState, profile_id: &str) -> Result<(), String> {
+    let connection = open_database(state)?;
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
+    let (account_type, api_base_url, mut auth_json) = connection
+        .query_row(
+            "SELECT account_type, api_base_url, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
+            params![profile_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(database_error)?
+        .ok_or_else(|| "Codex 账户不存在。".to_string())?;
+
+    let (environment, arguments) = if account_type == ACCOUNT_TYPE_OAUTH {
+        if codex_cli_token_needs_refresh(&auth_json, Utc::now().timestamp())? {
+            let token = refresh_oauth_token(&extract_refresh_token(&auth_json)?)?;
+            auth_json = build_codex_auth_json(&token)?;
+            persist_codex_cli_auth(
+                state,
+                &connection,
+                profile_id,
+                &auth_json,
+                active_id.as_deref() == Some(profile_id),
+            )?;
+        }
+        (
+            vec![(
+                "CODEX_ACCESS_TOKEN".to_string(),
+                codex_cli_access_token(&auth_json)?,
+            )],
+            vec![
+                "-c".to_string(),
+                codex_cli_config_override("model_provider", "openai"),
+            ],
+        )
+    } else if account_type == ACCOUNT_TYPE_RELAY {
+        let api_base_url = api_base_url.ok_or_else(|| "中转站账户缺少 API 地址。".to_string())?;
+        let api_key =
+            extract_api_key(&auth_json)?.ok_or_else(|| "中转站账户缺少 API Key。".to_string())?;
+        codex_relay_cli_options(api_key, &api_base_url)
+    } else {
+        return Err("不支持该 Codex 账户类型。".to_string());
+    };
+
+    env::open_codex_cli(state, &environment, &arguments)
+}
+
+fn codex_cli_access_token(auth_json: &str) -> Result<String, String> {
+    serde_json::from_str::<Value>(auth_json)
+        .map_err(|_| "存档的 auth.json 已损坏。".to_string())?
+        .get("tokens")
+        .and_then(|tokens| tokens.get("access_token"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "账户缺少 access_token，请重新授权。".to_string())
+}
+
+fn codex_cli_token_needs_refresh(auth_json: &str, now: i64) -> Result<bool, String> {
+    let access_token = match codex_cli_access_token(auth_json) {
+        Ok(token) => token,
+        Err(_) => return Ok(true),
+    };
+    Ok(decode_jwt_claims(&access_token)
+        .and_then(|claims| claims.get("exp").and_then(Value::as_i64))
+        .is_some_and(|expires_at| expires_at <= now + CODEX_CLI_TOKEN_REFRESH_BUFFER_SECONDS))
+}
+
+fn persist_codex_cli_auth(
+    state: &AppState,
+    connection: &Connection,
+    profile_id: &str,
+    auth_json: &str,
+    active: bool,
+) -> Result<(), String> {
+    let path = active.then(|| auth_path(state)).transpose()?;
+    let backup = path
+        .as_ref()
+        .map(|path| read_optional_file(path))
+        .transpose()?
+        .flatten();
+    if let Some(path) = path.as_ref() {
+        write_auth_json_atomically(path, auth_json)?;
+    }
+    if let Err(error) = connection
+        .execute(
+            "UPDATE accounts SET auth_json = ?1, updated_at = ?2 WHERE id = ?3 AND product = 'codex'",
+            params![auth_json, now_millis(), profile_id],
+        )
+        .map_err(database_error)
+    {
+        if let Some(path) = path.as_ref() {
+            restore_optional_file(path, backup.as_deref())?;
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn codex_cli_config_override(key: &str, value: &str) -> String {
+    format!("{key}={}", toml_edit::Value::from(value))
+}
+
+fn codex_relay_cli_options(
+    api_key: String,
+    api_base_url: &str,
+) -> (Vec<(String, String)>, Vec<String>) {
+    (
+        vec![(CODEX_RELAY_API_KEY_ENV.to_string(), api_key)],
+        vec![
+            "-c".to_string(),
+            codex_cli_config_override("model_provider", "cortana_relay"),
+            "-c".to_string(),
+            codex_cli_config_override("model_providers.cortana_relay.name", "Relay"),
+            "-c".to_string(),
+            codex_cli_config_override("model_providers.cortana_relay.base_url", api_base_url),
+            "-c".to_string(),
+            codex_cli_config_override("model_providers.cortana_relay.wire_api", "responses"),
+            "-c".to_string(),
+            codex_cli_config_override(
+                "model_providers.cortana_relay.env_key",
+                CODEX_RELAY_API_KEY_ENV,
+            ),
+        ],
+    )
 }
 
 #[tauri::command]
@@ -1538,6 +1690,41 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    fn access_token_auth(expires_at: Option<i64>) -> String {
+        let encode = |value: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value);
+        let claims = expires_at.map_or_else(|| json!({}), |exp| json!({ "exp": exp }));
+        let access_token = format!(
+            "{}.{}.{}",
+            encode(br#"{"alg":"none","typ":"JWT"}"#),
+            encode(claims.to_string().as_bytes()),
+            encode(b"signature")
+        );
+        json!({ "tokens": { "access_token": access_token } }).to_string()
+    }
+
+    #[test]
+    fn prepares_temporary_codex_cli_credentials() {
+        assert!(!codex_cli_token_needs_refresh(&access_token_auth(Some(4_601)), 1_000).unwrap());
+        assert!(codex_cli_token_needs_refresh(&access_token_auth(Some(4_600)), 1_000).unwrap());
+        assert!(!codex_cli_token_needs_refresh(&access_token_auth(None), 1_000).unwrap());
+        assert!(codex_cli_token_needs_refresh(r#"{"tokens":{}}"#, 1_000).unwrap());
+
+        let secret = "sk-secret-value";
+        let (environment, arguments) =
+            codex_relay_cli_options(secret.to_string(), "https://relay.example/v1");
+        assert_eq!(
+            environment,
+            vec![(CODEX_RELAY_API_KEY_ENV.to_string(), secret.to_string())]
+        );
+        assert!(!arguments.join(" ").contains(secret));
+        assert!(arguments
+            .iter()
+            .any(|argument| argument == "model_provider=\"cortana_relay\""));
+        assert!(arguments
+            .iter()
+            .any(|argument| argument.contains("https://relay.example/v1")));
     }
 
     #[test]

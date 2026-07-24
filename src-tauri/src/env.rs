@@ -1,10 +1,14 @@
 use super::{codex::auth_path, *};
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::OpenOptionsExt;
 
 const CODEX_RELEASE_URL: &str = "https://api.github.com/repos/openai/codex/releases/latest";
 const CLAUDE_RELEASE_URL: &str = "https://downloads.claude.ai/claude-code-releases/latest";
 const ANTIGRAVITY_RELEASE_URL: &str =
     "https://api.github.com/repos/google-antigravity/antigravity-cli/releases/latest";
 const GROK_RELEASE_URL: &str = "https://x.ai/cli/stable";
+const TERMINAL_APP_SETTING: &str = "terminal_app";
+const DEFAULT_TERMINAL_APP: &str = "terminal";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +93,26 @@ pub(super) async fn get_grok_cli_environment(
         .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+pub(super) fn get_terminal_app(state: State<'_, AppState>) -> Result<String, String> {
+    let connection = db::open_database(&state)?;
+    Ok(normalize_terminal_app(db::get_setting(
+        &connection,
+        TERMINAL_APP_SETTING,
+    )?))
+}
+
+#[tauri::command]
+pub(super) fn set_terminal_app(
+    state: State<'_, AppState>,
+    terminal_app: String,
+) -> Result<String, String> {
+    terminal_application(&terminal_app)?;
+    let connection = db::open_database(&state)?;
+    db::set_setting(&connection, TERMINAL_APP_SETTING, &terminal_app)?;
+    Ok(terminal_app)
+}
+
 pub(super) fn codex_candidates(state: &AppState) -> Vec<PathBuf> {
     let home = state
         .default_codex_home
@@ -114,7 +138,7 @@ pub(super) fn codex_candidates(state: &AppState) -> Vec<PathBuf> {
     candidates
 }
 
-fn find_codex(state: &AppState) -> Option<(PathBuf, String)> {
+pub(super) fn find_codex(state: &AppState) -> Option<(PathBuf, String)> {
     codex_candidates(state).into_iter().find_map(|candidate| {
         let output = codex_command(&candidate, &["--version"]).output().ok()?;
         if !output.status.success() {
@@ -123,6 +147,106 @@ fn find_codex(state: &AppState) -> Option<(PathBuf, String)> {
         let version = parse_codex_version(&String::from_utf8_lossy(&output.stdout))?;
         Some((candidate, version))
     })
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn open_codex_cli(
+    state: &AppState,
+    environment: &[(String, String)],
+    arguments: &[String],
+) -> Result<(), String> {
+    let (candidate, _) = find_codex(state)
+        .ok_or_else(|| "未找到可用的 Codex CLI，请先安装或更新 Codex。".to_string())?;
+    let home = state
+        .default_codex_home
+        .parent()
+        .ok_or_else(|| "无法定位用户主目录。".to_string())?;
+    let launcher = home.join(format!(".cortana-codex-{}.command", Uuid::new_v4()));
+    let script = codex_launcher_script(home, &candidate, environment, arguments);
+    let write_result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o700)
+            .open(&launcher)
+            .map_err(|error| format!("无法创建 CLI 启动脚本：{error}"))?;
+        file.write_all(script.as_bytes())
+            .map_err(|error| format!("无法写入 CLI 启动脚本：{error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("无法保存 CLI 启动脚本：{error}"))
+    })();
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&launcher);
+        return Err(error);
+    }
+
+    let terminal_app = {
+        let connection = db::open_database(state)?;
+        normalize_terminal_app(db::get_setting(&connection, TERMINAL_APP_SETTING)?)
+    };
+    let application = terminal_application(&terminal_app)?;
+    let status = Command::new("/usr/bin/open")
+        .args(["-a", application])
+        .arg(&launcher)
+        .status();
+    if !status.is_ok_and(|status| status.success()) {
+        let _ = fs::remove_file(&launcher);
+        return Err(format!(
+            "无法使用 {application} 打开终端，请确认应用已安装。"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn open_codex_cli(
+    _state: &AppState,
+    _environment: &[(String, String)],
+    _arguments: &[String],
+) -> Result<(), String> {
+    Err("使用指定账号打开 Codex CLI 目前仅支持 macOS。".to_string())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn codex_launcher_script(
+    home: &Path,
+    candidate: &Path,
+    environment: &[(String, String)],
+    arguments: &[String],
+) -> String {
+    let exports = environment
+        .iter()
+        .map(|(name, value)| format!("export {name}={}\n", shell_quote(value)))
+        .collect::<String>();
+    let arguments = arguments
+        .iter()
+        .map(|argument| format!(" {}", shell_quote(argument)))
+        .collect::<String>();
+    format!(
+        "#!/bin/zsh\nrm -f -- \"$0\"\ncd -- {} || exit 1\n{exports}exec {}{arguments}\n",
+        shell_quote(&home.display().to_string()),
+        shell_quote(&candidate.display().to_string()),
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn terminal_application(value: &str) -> Result<&'static str, String> {
+    match value {
+        "terminal" => Ok("Terminal"),
+        "warp" => Ok("Warp"),
+        "ghostty" => Ok("Ghostty"),
+        _ => Err("不支持的终端应用。".to_string()),
+    }
+}
+
+fn normalize_terminal_app(value: Option<String>) -> String {
+    value
+        .filter(|value| terminal_application(value).is_ok())
+        .unwrap_or_else(|| DEFAULT_TERMINAL_APP.to_string())
 }
 
 fn inspect_codex_environment(state: &AppState) -> Result<CliEnvironment, String> {
@@ -555,6 +679,33 @@ mod tests {
         assert_eq!(installed.as_deref(), Some("0.143.0"));
         assert_eq!(latest.as_deref(), Some("0.144.4"));
         assert_eq!(method, "brew");
+    }
+
+    #[test]
+    fn builds_self_deleting_codex_launcher_with_shell_escaping() {
+        let script = codex_launcher_script(
+            Path::new("/Users/O'Brien"),
+            Path::new("/opt/homebrew/bin/codex"),
+            &[("CODEX_ACCESS_TOKEN".to_string(), "token'quoted".to_string())],
+            &["-c".to_string(), "model_provider=\"openai\"".to_string()],
+        );
+        assert!(script.contains("rm -f -- \"$0\""));
+        assert!(script.contains("cd -- '/Users/O'\\''Brien'"));
+        assert!(script.contains("export CODEX_ACCESS_TOKEN='token'\\''quoted'"));
+        assert!(script.contains("exec '/opt/homebrew/bin/codex' '-c'"));
+        assert!(script.ends_with("'model_provider=\"openai\"'\n"));
+    }
+
+    #[test]
+    fn validates_and_defaults_terminal_app() {
+        assert_eq!(terminal_application("terminal"), Ok("Terminal"));
+        assert_eq!(terminal_application("warp"), Ok("Warp"));
+        assert_eq!(terminal_application("ghostty"), Ok("Ghostty"));
+        assert_eq!(normalize_terminal_app(None), "terminal");
+        assert_eq!(
+            normalize_terminal_app(Some("unsupported".to_string())),
+            "terminal"
+        );
     }
 
     #[test]
