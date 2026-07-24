@@ -12,7 +12,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Fragment } from 'react';
-import antigravityIcon from '../../assets/antigravity.png';
+import antigravityIcon from '../../assets/antigravity.svg';
 import chatGptIcon from '../../assets/chatgpt.svg';
 import claudeIcon from '../../assets/claude.svg';
 import grokIcon from '../../assets/grok.svg';
