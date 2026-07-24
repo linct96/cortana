@@ -5,12 +5,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION=${1:-}
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "用法：pnpm release <版本号，例如 1.0.0>" >&2
-  exit 1
-fi
-
-TAG="v$VERSION"
 
 if [[ "$(git branch --show-current)" != "main" ]]; then
   echo "发布只能在 main 分支执行。" >&2
@@ -28,6 +22,64 @@ if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
   echo "本地 main 与 origin/main 不一致，请先同步。" >&2
   exit 1
 fi
+
+if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+  echo "请先安装 GitHub CLI 并执行 gh auth login。" >&2
+  exit 1
+fi
+
+CURRENT_VERSION=$(node -e "console.log(require('./package.json').version)")
+if [[ ! "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "当前版本号格式错误：$CURRENT_VERSION" >&2
+  exit 1
+fi
+
+if [[ -z "$VERSION" ]]; then
+  if [[ ! -t 0 ]]; then
+    echo "非交互环境请使用 pnpm release <版本号>。" >&2
+    exit 1
+  fi
+
+  IFS=. read -r MAJOR MINOR PATCH <<<"$CURRENT_VERSION"
+  PATCH_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+  MINOR_VERSION="$MAJOR.$((MINOR + 1)).0"
+  MAJOR_VERSION="$((MAJOR + 1)).0.0"
+
+  echo "当前版本：$CURRENT_VERSION"
+  select OPTION in \
+    "补丁版本 Patch：$PATCH_VERSION" \
+    "次版本 Minor：$MINOR_VERSION" \
+    "主版本 Major：$MAJOR_VERSION" \
+    "取消发布"; do
+    case "$REPLY" in
+      1) VERSION=$PATCH_VERSION ;;
+      2) VERSION=$MINOR_VERSION ;;
+      3) VERSION=$MAJOR_VERSION ;;
+      4)
+        echo "已取消发布。"
+        exit 0
+        ;;
+      *)
+        echo "请输入 1-4。" >&2
+        continue
+        ;;
+    esac
+    break
+  done
+
+  read -r -p "确认发布 v${VERSION}？[y/N] " CONFIRM
+  if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "已取消发布。"
+    exit 0
+  fi
+fi
+
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "版本号格式错误，应为 X.Y.Z。" >&2
+  exit 1
+fi
+
+TAG="v$VERSION"
 
 if git show-ref --verify --quiet "refs/tags/$TAG" ||
   git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
@@ -86,4 +138,9 @@ git commit -m "chore(release): $TAG"
 git tag -a "$TAG" -m "Cortana $TAG"
 git push --atomic origin main "$TAG"
 
-echo "已发布 ${TAG}，GitHub Actions 将自动构建正式安装包。"
+gh release create "$TAG" \
+  --verify-tag \
+  --title "Cortana $TAG" \
+  --generate-notes
+
+echo "已发布 ${TAG}，GitHub Actions 将自动构建并上传正式安装包。"
