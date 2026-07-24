@@ -29,7 +29,7 @@ const editorExtensions = [
       borderRight: '1px solid var(--border)',
       color: 'var(--muted-foreground)',
     },
-    '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--accent)' },
+    '.cm-activeLineGutter': { backgroundColor: 'var(--accent)' },
   }),
 ];
 

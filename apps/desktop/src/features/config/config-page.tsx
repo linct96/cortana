@@ -74,7 +74,7 @@ const editorTheme = EditorView.theme({
     borderRight: '1px solid var(--border)',
     color: 'var(--muted-foreground)',
   },
-  '.cm-activeLine, .cm-activeLineGutter': {
+  '.cm-activeLineGutter': {
     backgroundColor: 'var(--accent)',
   },
 });
