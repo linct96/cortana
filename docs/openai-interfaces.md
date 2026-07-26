@@ -139,7 +139,7 @@ GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits
 Authorization: Bearer <access_token>
 ChatGPT-Account-ID: <account_id>
 Accept: application/json
-User-Agent: codex_cli_rs
+User-Agent: codex-cli
 ```
 
 2026-07-14 使用 Team 账户实际请求得到的响应结构：
@@ -167,7 +167,31 @@ User-Agent: codex_cli_rs
 ```
 
 项目当前使用 `available_count` 展示可用次数，并在明细中展示 `title` 和 `expires_at`；
-`status` 用于控制操作按钮状态。本项目只调用上述查询接口，不调用重置卡兑换接口。
+`status` 用于控制操作按钮状态。
+
+使用指定重置卡时直接调用：
+
+```http
+POST https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume
+Authorization: Bearer <access_token>
+ChatGPT-Account-ID: <account_id>
+Accept: application/json
+Content-Type: application/json
+User-Agent: codex-cli
+
+{
+  "redeem_request_id": "<UUID>",
+  "credit_id": "<reset_credit_id>"
+}
+```
+
+`redeem_request_id` 在失败重试时保持不变。响应的 `code` 当前支持 `reset`、
+`already_redeemed`、`nothing_to_reset` 和 `no_credit`；兑换响应解析完成后，项目会重新查询
+额度与重置卡列表作为界面和本地缓存的数据来源。FedRAMP 账户额外发送
+`X-OpenAI-Fedramp: true`。
+
+> 注意：重置卡查询和兑换端点同样属于 ChatGPT Web 私有后端接口，不是公开、稳定的
+> OpenAI API。请求和响应结构依据 Codex 当前实现，升级前应重新核对并使用测试账户验证。
 
 ## 身份声明
 

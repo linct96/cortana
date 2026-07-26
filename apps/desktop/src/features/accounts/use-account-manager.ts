@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { invoke, listenOAuthProgress } from '../../backend';
 import { appError } from '../../utils';
+import { resetCreditOutcomeNotice } from './types';
 import type {
   AddMode,
   AccountProduct,
@@ -10,6 +11,7 @@ import type {
   OAuthProgress,
   PendingConfirm,
   Profile,
+  ResetCreditConsumeResult,
   ResetCredits,
   UsageRefreshResult,
 } from './types';
@@ -243,6 +245,38 @@ export function useAccountManager(product: AccountProduct) {
     }
   }
 
+  async function consumeResetCredit(creditId: string, idempotencyKey: string) {
+    if (!resetCreditsProfile) return false;
+    setBusy(`consume-reset-credit:${creditId}`);
+    try {
+      const result = await invoke<ResetCreditConsumeResult>('consume_profile_reset_credit', {
+        profileId: resetCreditsProfile.id,
+        creditId,
+        idempotencyKey,
+      });
+      setResetCredits(result.credits);
+      setResetCreditsProfile(result.profile);
+      setStatus((current) =>
+        current
+          ? {
+              ...current,
+              profiles: current.profiles.map((profile) =>
+                profile.id === result.profile.id ? result.profile : profile,
+              ),
+            }
+          : current,
+      );
+      const notice = resetCreditOutcomeNotice(result.outcome);
+      toast[notice.kind](notice.message);
+      return true;
+    } catch (error) {
+      toast.error(appError(error));
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function switchTo(profile: Profile, force = false) {
     setBusy(`switch:${profile.id}`);
     try {
@@ -463,6 +497,7 @@ export function useAccountManager(product: AccountProduct) {
     refreshAllAccounts,
     refreshAccount,
     viewResetCredits,
+    consumeResetCredit,
     switchTo,
     openCli,
     importCurrent,
