@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import { LoaderCircle, Tickets } from 'lucide-react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -79,8 +80,6 @@ function statusLabel(status: string) {
 }
 
 function formatExpiryDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(date);
+  const date = dayjs(value);
+  return date.isValid() ? date.format('MM-DD HH:mm') : value;
 }
