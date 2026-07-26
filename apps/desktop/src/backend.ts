@@ -53,7 +53,10 @@ type OAuthProgressSnapshot<T> = {
   progress: T | null;
 };
 
-export async function listenOAuthProgress<T>(handler: (progress: T) => void): Promise<() => void> {
+export async function listenOAuthProgress<T>(
+  handler: (progress: T) => void,
+  onError: (error: unknown) => void,
+): Promise<() => void> {
   if (isTauri) {
     return listen<T>('oauth-progress', ({ payload }) => handler(payload));
   }
@@ -63,18 +66,27 @@ export async function listenOAuthProgress<T>(handler: (progress: T) => void): Pr
   const initial = await invoke<OAuthProgressSnapshot<T>>('get_oauth_progress');
   cursor = initial.sequence;
   if (initial.pending && initial.progress) handler(initial.progress);
-  const timer = window.setInterval(() => {
-    void invoke<OAuthProgressSnapshot<T>>('get_oauth_progress')
-      .then((snapshot) => {
-        if (!active || snapshot.sequence <= cursor) return;
+  let timer: number | undefined;
+  async function poll() {
+    try {
+      const snapshot = await invoke<OAuthProgressSnapshot<T>>('get_oauth_progress');
+      if (!active) return;
+      if (snapshot.sequence > cursor) {
         cursor = snapshot.sequence;
         if (snapshot.progress) handler(snapshot.progress);
-      })
-      .catch(() => {});
-  }, 1000);
+      }
+    } catch (error) {
+      if (!active) return;
+      active = false;
+      onError(error);
+      return;
+    }
+    if (active) timer = window.setTimeout(() => void poll(), 1000);
+  }
+  timer = window.setTimeout(() => void poll(), 1000);
   return () => {
     active = false;
-    window.clearInterval(timer);
+    if (timer !== undefined) window.clearTimeout(timer);
   };
 }
 
