@@ -499,7 +499,7 @@ pub(super) fn reorder_profiles(
         transaction
             .execute(
                 "UPDATE accounts SET sort_order = ?1 WHERE id = ?2 AND product = ?3",
-                params![sort_order, profile_id, product.as_str()],
+                params![sort_order as i64, profile_id, product.as_str()],
             )
             .map_err(database_error)?;
     }

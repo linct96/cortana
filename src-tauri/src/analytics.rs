@@ -211,7 +211,7 @@ fn finish_analytics(
             }
         })
         .collect::<Vec<_>>();
-    models.sort_by(|left, right| right.tokens.total_tokens.cmp(&left.tokens.total_tokens));
+    models.sort_by_key(|model| std::cmp::Reverse(model.tokens.total_tokens));
 
     Ok(UsageAnalytics {
         total: analytics.total,

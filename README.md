@@ -8,7 +8,7 @@
 
 - Node.js 22
 - pnpm 11.8.0
-- Rust 1.93.0
+- Rust 1.95.0
 - 支持 `app-server` 的 Codex CLI（会话管理功能需要）
 - Grok CLI（Grok 账号管理需要）
 

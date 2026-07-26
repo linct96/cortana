@@ -632,7 +632,7 @@ pub(super) fn decode_jwt_claims(token: &str) -> Option<Value> {
 
 pub(super) fn random_urlsafe(bytes: usize) -> String {
     let mut buffer = vec![0_u8; bytes];
-    rand::thread_rng().fill_bytes(&mut buffer);
+    rand::fill(&mut buffer);
     URL_SAFE_NO_PAD.encode(buffer)
 }
 
