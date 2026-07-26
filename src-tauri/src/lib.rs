@@ -216,12 +216,12 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("failed to build Tauri application")
-        .run(|app, event| match event {
+        .run(|_app, event| match event {
             #[cfg(target_os = "macos")]
             RunEvent::Reopen {
                 has_visible_windows: false,
                 ..
-            } => tray::show_main_window(app),
+            } => tray::show_main_window(_app),
             RunEvent::ExitRequested { .. } => {
                 // The explicit tray quit action is the only normal exit path.
             }
