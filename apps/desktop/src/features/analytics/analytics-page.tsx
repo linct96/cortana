@@ -15,6 +15,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from '../../components/ui/chart';
+import { Empty, EmptyHeader, EmptyTitle } from '../../components/ui/empty';
 import { Progress } from '../../components/ui/progress';
 import { ToggleGroup, ToggleGroupItem } from '../../components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
@@ -409,9 +410,11 @@ function LoadingState() {
 
 function EmptyState() {
   return (
-    <div className="mt-4 border-y border-border py-12 text-center text-sm text-muted-foreground">
-      当前范围内暂无 Token 记录
-    </div>
+    <Empty className="mt-4 min-h-32 rounded-none border-y">
+      <EmptyHeader>
+        <EmptyTitle>当前范围内暂无 Token 记录</EmptyTitle>
+      </EmptyHeader>
+    </Empty>
   );
 }
 

@@ -15,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../components/ui/dialog';
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '../../components/ui/empty';
 import {
   InputGroup,
   InputGroupAddon,
@@ -466,15 +467,21 @@ function EmptyState({
   searching?: boolean;
 }) {
   return (
-    <div className="flex min-h-52 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-      {loading ? <LoaderCircle className="animate-spin" /> : <MessageSquare />}
-      {loading
-        ? '正在读取会话'
-        : searching
-          ? '没有匹配的会话'
-          : archived
-            ? '暂无已归档会话'
-            : '暂无会话'}
-    </div>
+    <Empty className="min-h-52 rounded-none">
+      <EmptyHeader>
+        <EmptyMedia variant={loading ? 'default' : 'icon'}>
+          {loading ? <LoaderCircle className="animate-spin" /> : <MessageSquare />}
+        </EmptyMedia>
+        <EmptyTitle>
+          {loading
+            ? '正在读取会话'
+            : searching
+              ? '没有匹配的会话'
+              : archived
+                ? '暂无已归档会话'
+                : '暂无会话'}
+        </EmptyTitle>
+      </EmptyHeader>
+    </Empty>
   );
 }
