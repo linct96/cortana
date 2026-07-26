@@ -617,7 +617,13 @@ fn parse_codex_version(value: &str) -> Option<String> {
 }
 
 fn normalize_install_method(value: &str) -> &'static str {
-    match value.trim().to_ascii_lowercase().as_str() {
+    match value
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "brew" | "homebrew" => "brew",
         "npm" => "npm",
         "pnpm" => "pnpm",
@@ -666,6 +672,10 @@ mod tests {
             Some("0.144.4")
         );
         assert_eq!(normalize_install_method("Homebrew"), "brew");
+        assert_eq!(
+            normalize_install_method("standalone (windows, package ...)"),
+            "standalone"
+        );
         assert_eq!(normalize_install_method("unexpected"), "unknown");
 
         let report = json!({
