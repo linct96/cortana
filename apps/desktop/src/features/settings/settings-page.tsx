@@ -563,7 +563,7 @@ function CliEnvironmentCard({
           <EnvironmentRow label="最新版本" mono>
             {loading && !environment ? '检测中...' : (environment?.latestVersion ?? '获取失败')}
           </EnvironmentRow>
-          <EnvironmentRow label="安装方式">
+          <EnvironmentRow label="安装方式" mono>
             {environment?.installed ? installMethodLabel(environment.installMethod) : '未知'}
           </EnvironmentRow>
         </dl>
