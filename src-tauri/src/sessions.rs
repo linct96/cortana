@@ -1,6 +1,6 @@
 use super::{
     codex::auth_path,
-    env::{codex_candidates, codex_command, grok_candidates, grok_home},
+    env::{codex_command, find_codex, grok_candidates, grok_home},
     *,
 };
 use chrono::DateTime;
@@ -759,26 +759,15 @@ fn run_codex_request(state: &AppState, method: &str, params: Value) -> Result<Va
 }
 
 fn spawn_codex(state: &AppState, codex_home: &Path) -> Result<Child, String> {
-    let candidates = codex_candidates(state);
-    let mut last_error = None;
-    for candidate in candidates {
-        match codex_command(&candidate, &["app-server"])
-            .env("CODEX_HOME", codex_home)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(child) => return Ok(child),
-            Err(error) => last_error = Some(error),
-        }
-    }
-    Err(format!(
-        "未找到可用的 Codex CLI，请先安装或更新 Codex。{}",
-        last_error
-            .map(|error| format!("（{error}）"))
-            .unwrap_or_default()
-    ))
+    let (candidate, _) = find_codex(state)
+        .ok_or_else(|| "未找到可用的 Codex CLI，请先安装或更新 Codex。".to_string())?;
+    codex_command(&candidate, &["app-server"])
+        .env("CODEX_HOME", codex_home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("无法启动 Codex app-server：{error}"))
 }
 
 fn decode_response(line: &str) -> Result<Option<Value>, String> {
