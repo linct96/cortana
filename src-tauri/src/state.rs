@@ -92,6 +92,7 @@ pub(super) struct ProfileSummary {
     pub(super) antigravity_quota: Option<AntigravityQuota>,
     pub(super) usage_updated_at: Option<i64>,
     pub(super) reset_credits_available_count: Option<i64>,
+    pub(super) needs_reauthorization: bool,
     pub(super) is_renewable: bool,
     pub(super) is_active: bool,
     pub(super) last_used_at: Option<i64>,

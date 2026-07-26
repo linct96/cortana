@@ -108,6 +108,7 @@ export function AccountRow({
       <div className="min-w-0 flex-1">
         <div className="mb-0.5 flex items-center gap-2">
           <strong className="truncate text-sm font-medium">{profile.alias}</strong>
+          {profile.needsReauthorization && <Badge variant="destructive">已过期</Badge>}
           {profile.planType && <Badge variant="outline">{planLabel(profile.planType)}</Badge>}
           {profile.isActive && <Badge>使用中</Badge>}
         </div>

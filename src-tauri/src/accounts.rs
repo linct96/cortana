@@ -166,7 +166,7 @@ fn persist_codex_cli_auth(
     }
     if let Err(error) = connection
         .execute(
-            "UPDATE accounts SET auth_json = ?1, updated_at = ?2 WHERE id = ?3 AND product = 'codex'",
+            "UPDATE accounts SET auth_json = ?1, oauth_invalidated_at = NULL, updated_at = ?2 WHERE id = ?3 AND product = 'codex'",
             params![auth_json, now_millis(), profile_id],
         )
         .map_err(database_error)
@@ -684,7 +684,7 @@ pub(super) fn list_profiles_for_product(
     active_id: Option<&str>,
 ) -> Result<Vec<ProfileSummary>, String> {
     let mut statement = connection
-        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json FROM accounts WHERE product = ?1 ORDER BY sort_order ASC, created_at ASC")
+        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json, oauth_invalidated_at FROM accounts WHERE product = ?1 ORDER BY sort_order ASC, created_at ASC")
         .map_err(database_error)?;
     let rows = statement
         .query_map(params![product.as_str()], |row| {
@@ -742,6 +742,8 @@ pub(super) fn profile_summary_from_row(
         antigravity_quota,
         usage_updated_at: row.get(13)?,
         reset_credits_available_count: row.get(16)?,
+        needs_reauthorization: product == AccountProduct::Codex
+            && row.get::<_, Option<i64>>(19)?.is_some(),
         is_renewable,
         last_used_at: row.get(14)?,
         updated_at: row.get(15)?,
@@ -764,7 +766,7 @@ pub(super) fn get_profile_summary_for_product(
 ) -> Result<ProfileSummary, String> {
     connection
         .query_row(
-            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json FROM accounts WHERE id = ?1 AND product = ?2",
+            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json, oauth_invalidated_at FROM accounts WHERE id = ?1 AND product = ?2",
             params![profile_id, product.as_str()],
             |row| profile_summary_from_row(row, product, active_id),
         )
@@ -808,6 +810,7 @@ pub(super) fn detected_profile_from_auth(
             antigravity_quota: None,
             usage_updated_at: None,
             reset_credits_available_count: None,
+            needs_reauthorization: false,
             is_renewable: true,
             is_active: true,
             last_used_at: None,
@@ -837,6 +840,7 @@ pub(super) fn detected_profile_from_auth(
         antigravity_quota: None,
         usage_updated_at: usage.map(|_| now),
         reset_credits_available_count: None,
+        needs_reauthorization: false,
         is_renewable: true,
         is_active: true,
         last_used_at: None,
@@ -920,7 +924,7 @@ pub(super) fn resolve_auth_state(
     if let Some(profile_id) = profile_id.as_deref() {
         connection
             .execute(
-                "UPDATE accounts SET auth_json = ?1, updated_at = ?2 WHERE id = ?3 AND product = 'codex' AND account_type = 'oauth' AND auth_json <> ?1",
+                "UPDATE accounts SET auth_json = ?1, oauth_invalidated_at = NULL, updated_at = ?2 WHERE id = ?3 AND product = 'codex' AND account_type = 'oauth' AND auth_json <> ?1",
                 params![auth_json, now_millis(), profile_id],
             )
             .map_err(database_error)?;
@@ -1044,7 +1048,7 @@ pub(super) fn update_profile_internal(
         let transaction = connection.transaction().map_err(database_error)?;
         let changed = transaction
             .execute(
-                "UPDATE accounts SET account_id = ?1, chatgpt_user_id = ?2, email = ?3, alias = ?4, plan_type = CASE WHEN ?5 = '' THEN plan_type ELSE ?5 END, auth_json = ?6, updated_at = ?7 WHERE id = ?8 AND product = 'codex'",
+                "UPDATE accounts SET account_id = ?1, chatgpt_user_id = ?2, email = ?3, alias = ?4, plan_type = CASE WHEN ?5 = '' THEN plan_type ELSE ?5 END, auth_json = ?6, oauth_invalidated_at = NULL, updated_at = ?7 WHERE id = ?8 AND product = 'codex'",
                 params![identity.account_id, user_id, identity.email, alias, identity.plan_type, formatted_auth_json, now_millis(), profile_id],
             )
             .map_err(database_error)?;
@@ -1094,7 +1098,7 @@ pub(super) fn upsert_profile_from_auth(
         };
         connection
             .execute(
-                "UPDATE accounts SET account_type = 'oauth', api_base_url = NULL, account_id = ?1, chatgpt_user_id = ?2, email = ?3, alias = ?4, plan_type = CASE WHEN ?5 = '' THEN plan_type ELSE ?5 END, auth_json = ?6, updated_at = ?7 WHERE id = ?8 AND product = 'codex'",
+                "UPDATE accounts SET account_type = 'oauth', api_base_url = NULL, account_id = ?1, chatgpt_user_id = ?2, email = ?3, alias = ?4, plan_type = CASE WHEN ?5 = '' THEN plan_type ELSE ?5 END, auth_json = ?6, oauth_invalidated_at = NULL, updated_at = ?7 WHERE id = ?8 AND product = 'codex'",
                 params![identity.account_id, user_id, identity.email, alias, identity.plan_type, auth_json, now, id],
             )
             .map_err(database_error)?;
@@ -1323,7 +1327,7 @@ fn due_codex_profile_ids(
         .prepare(
             "SELECT id, MAX(COALESCE(usage_refresh_attempted_at, 0), COALESCE(usage_updated_at, 0))
              FROM accounts
-             WHERE product = 'codex' AND account_type = 'oauth'",
+             WHERE product = 'codex' AND account_type = 'oauth' AND oauth_invalidated_at IS NULL",
         )
         .map_err(database_error)?
         .query_map([], |row| {
@@ -1444,7 +1448,20 @@ pub(super) fn refresh_profile_usage_internal(
     if account_type == ACCOUNT_TYPE_RELAY {
         return Err("中转站账户不支持额度查询。".to_string());
     }
-    let usage = fetch_account_usage(&auth_json, &account_id)?;
+    let usage = match fetch_account_usage(&auth_json, &account_id) {
+        Ok(usage) => usage,
+        Err(error) => {
+            if error.authentication_invalidated {
+                connection
+                    .execute(
+                        "UPDATE accounts SET oauth_invalidated_at = ?1 WHERE id = ?2 AND product = 'codex'",
+                        params![now_millis(), profile_id],
+                    )
+                    .map_err(database_error)?;
+            }
+            return Err(error.message);
+        }
+    };
     let plan_type = usage.plan_type.trim().to_lowercase();
     let reset_credits = (!plan_type.is_empty() && plan_type != "free")
         .then(|| fetch_reset_credits(&auth_json, &account_id))
@@ -1452,7 +1469,7 @@ pub(super) fn refresh_profile_usage_internal(
     let now = now_millis();
     connection
         .execute(
-            "UPDATE accounts SET plan_type = CASE WHEN ?1 = '' THEN plan_type ELSE ?1 END, usage_primary_percent = ?2, usage_primary_window_minutes = ?3, usage_primary_resets_at = ?4, usage_secondary_percent = ?5, usage_secondary_window_minutes = ?6, usage_secondary_resets_at = ?7, usage_updated_at = ?8, reset_credits_available_count = ?9 WHERE id = ?10 AND product = 'codex'",
+            "UPDATE accounts SET plan_type = CASE WHEN ?1 = '' THEN plan_type ELSE ?1 END, usage_primary_percent = ?2, usage_primary_window_minutes = ?3, usage_primary_resets_at = ?4, usage_secondary_percent = ?5, usage_secondary_window_minutes = ?6, usage_secondary_resets_at = ?7, usage_updated_at = ?8, reset_credits_available_count = ?9, oauth_invalidated_at = NULL WHERE id = ?10 AND product = 'codex'",
             params![
                 usage.plan_type,
                 usage.primary.as_ref().map(|window| window.used_percent),
@@ -1548,19 +1565,29 @@ pub(super) fn parse_reset_credits(body: &str) -> Result<ResetCredits, String> {
     })
 }
 
-pub(super) fn fetch_account_usage(
+struct AccountUsageFetchError {
+    message: String,
+    authentication_invalidated: bool,
+}
+
+fn fetch_account_usage(
     auth_json: &str,
     account_id: &str,
-) -> Result<AccountUsage, String> {
-    let auth: Value =
-        serde_json::from_str(auth_json).map_err(|_| "存档的 auth.json 已损坏。".to_string())?;
+) -> Result<AccountUsage, AccountUsageFetchError> {
+    let auth: Value = serde_json::from_str(auth_json).map_err(|_| AccountUsageFetchError {
+        message: "存档的 auth.json 已损坏。".to_string(),
+        authentication_invalidated: false,
+    })?;
     let access_token = auth
         .get("tokens")
         .and_then(|tokens| tokens.get("access_token"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|token| !token.is_empty())
-        .ok_or_else(|| "账户缺少 access_token，请重新授权。".to_string())?;
+        .ok_or_else(|| AccountUsageFetchError {
+            message: "账户缺少 access_token，请重新授权。".to_string(),
+            authentication_invalidated: true,
+        })?;
     let account_id = if account_id.is_empty() {
         identity_from_auth_json(&auth).account_id
     } else {
@@ -1569,7 +1596,10 @@ pub(super) fn fetch_account_usage(
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| AccountUsageFetchError {
+            message: error.to_string(),
+            authentication_invalidated: false,
+        })?;
     let mut request = client
         .get(ACCOUNT_USAGE_URL)
         .bearer_auth(access_token)
@@ -1578,13 +1608,15 @@ pub(super) fn fetch_account_usage(
     if !account_id.is_empty() {
         request = request.header("ChatGPT-Account-ID", &account_id);
     }
-    let response = request
-        .send()
-        .map_err(|error| format!("账户信息查询失败：{error}"))?;
+    let response = request.send().map_err(|error| AccountUsageFetchError {
+        message: format!("账户信息查询失败：{error}"),
+        authentication_invalidated: false,
+    })?;
     let status = response.status();
-    let body = response
-        .text()
-        .map_err(|error| format!("无法读取账户信息：{error}"))?;
+    let body = response.text().map_err(|error| AccountUsageFetchError {
+        message: format!("无法读取账户信息：{error}"),
+        authentication_invalidated: false,
+    })?;
     if !status.is_success() {
         let message = serde_json::from_str::<Value>(&body)
             .ok()
@@ -1596,13 +1628,34 @@ pub(super) fn fetch_account_usage(
                     .map(str::to_string)
             })
             .unwrap_or_else(|| body.trim().to_string());
-        return Err(if message.is_empty() {
-            format!("账户信息查询失败：HTTP {status}")
-        } else {
-            format!("账户信息查询失败：{message}")
+        let authentication_invalidated = authentication_invalidated(status.as_u16(), &body);
+        return Err(AccountUsageFetchError {
+            message: if message.is_empty() {
+                format!("账户信息查询失败：HTTP {status}")
+            } else {
+                format!("账户信息查询失败：{message}")
+            },
+            authentication_invalidated,
         });
     }
-    parse_account_usage(&body)
+    parse_account_usage(&body).map_err(|message| AccountUsageFetchError {
+        message,
+        authentication_invalidated: false,
+    })
+}
+
+fn authentication_invalidated(status: u16, body: &str) -> bool {
+    if status != 401 {
+        return false;
+    }
+    let body = body.to_ascii_lowercase();
+    [
+        "token_invalidated",
+        "invalid_token",
+        "authentication token has been invalidated",
+    ]
+    .iter()
+    .any(|signal| body.contains(signal))
 }
 
 pub(super) fn parse_account_usage(body: &str) -> Result<AccountUsage, String> {
@@ -1785,6 +1838,20 @@ mod tests {
         ));
         assert!(!usage_refresh_due(now, now - 9_999, false, settings, true));
         assert!(usage_refresh_due(now, now - 10_000, false, settings, true));
+        connection
+            .execute(
+                "UPDATE accounts SET oauth_invalidated_at = ?1 WHERE id = 'oauth'",
+                params![now],
+            )
+            .unwrap();
+        assert!(
+            get_profile_summary(&connection, "oauth", None)
+                .unwrap()
+                .needs_reauthorization
+        );
+        assert!(due_codex_profile_ids(&state, settings, true)
+            .unwrap()
+            .is_empty());
 
         drop(connection);
         fs::remove_dir_all(directory).unwrap();
@@ -1990,6 +2057,26 @@ mod tests {
         assert_eq!(usage.plan_type, "plus");
         assert_eq!(usage.primary.unwrap().window_minutes, Some(300));
         assert_eq!(usage.secondary.unwrap().used_percent, 5.0);
+    }
+
+    #[test]
+    fn only_marks_explicitly_invalidated_authentication() {
+        assert!(authentication_invalidated(
+            401,
+            r#"{"message":"Your authentication token has been invalidated. Please try signing in again"}"#
+        ));
+        assert!(authentication_invalidated(
+            401,
+            r#"{"error":{"code":"invalid_token"}}"#
+        ));
+        assert!(!authentication_invalidated(
+            401,
+            r#"{"message":"temporary error"}"#
+        ));
+        assert!(!authentication_invalidated(
+            500,
+            r#"{"error":{"code":"invalid_token"}}"#
+        ));
     }
     #[test]
     fn parses_reset_credit_details() {

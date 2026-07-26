@@ -153,7 +153,10 @@ export function useAccountManager(product: AccountProduct) {
 
   async function refreshAllAccounts() {
     const profiles = (status?.profiles ?? []).filter(
-      (profile) => profile.accountType === 'oauth' && (product !== 'claude' || profile.isRenewable),
+      (profile) =>
+        profile.accountType === 'oauth' &&
+        !profile.needsReauthorization &&
+        (product !== 'claude' || profile.isRenewable),
     );
     if (!profiles.length) {
       toast.info(product === 'claude' ? '没有可更新的登录令牌。' : '没有可刷新的账户。');
@@ -198,6 +201,7 @@ export function useAccountManager(product: AccountProduct) {
       await refresh();
     } catch (error) {
       toast.error(appError(error));
+      await refresh(false);
     } finally {
       setBusy(null);
     }
