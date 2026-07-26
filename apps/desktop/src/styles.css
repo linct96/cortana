@@ -89,13 +89,6 @@ body,
 body {
   margin: 0;
   min-width: 320px;
-  user-select: none;
-}
-input,
-textarea,
-[contenteditable='true'],
-.cm-content {
-  user-select: text;
 }
 button,
 input {
