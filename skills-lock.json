@@ -5,7 +5,13 @@
       "source": "linct96/ai",
       "sourceType": "github",
       "skillPath": ".agents/skills/code-review/SKILL.md",
-      "computedHash": "fdac7e40cca3f6548f4eab9a08828ce7c33c8e61d8cfe42a9a6a1c8cf606f298"
+      "computedHash": "a9ad981de119ccf6d874f286c58a97c30da66588e95b37168a6c8ea65344ba5f"
+    },
+    "frontend-design": {
+      "source": "linct96/ai",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/frontend-design/SKILL.md",
+      "computedHash": "a99e64cf2c0a6a1becbb6b2a938da6349a01e55c752b98ae140515fc3f28f39b"
     },
     "migrate-radix-to-base": {
       "source": "shadcn/ui",
