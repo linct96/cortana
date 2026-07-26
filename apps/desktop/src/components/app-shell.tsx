@@ -126,9 +126,7 @@ export function AppContent({ children }: { children: ReactNode }) {
 
 function ProductMenu() {
   const navigate = useNavigate();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const { activeProduct, setActiveProduct, previousMainPath, setCliAvailable, configDirty } =
-    useAppShell();
+  const { activeProduct, setActiveProduct, setCliAvailable, configDirty } = useAppShell();
   const claude = activeProduct === 'claude';
   const antigravity = activeProduct === 'antigravity';
   const grok = activeProduct === 'grok';
@@ -142,14 +140,7 @@ function ProductMenu() {
       await invoke('set_active_product', { product });
       setActiveProduct(product);
       setCliAvailable(null);
-      await navigate({
-        to:
-          pathname === '/sessions' || pathname === '/analytics'
-            ? pathname
-            : product === 'codex'
-              ? previousMainPath
-              : '/accounts',
-      });
+      await navigate({ to: '/accounts' });
     } catch (error) {
       toast.error(appError(error));
     }
