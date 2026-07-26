@@ -20,6 +20,8 @@ pub(super) const MAX_IMPORTED_AUTH_JSON_BYTES: usize = 1024 * 1024;
 pub(super) const ACCOUNT_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 pub(super) const RESET_CREDITS_URL: &str =
     "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+pub(super) const RESET_CREDITS_CONSUME_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
 pub(super) const TRAY_ID: &str = "account-switcher";
 pub(super) const ACCOUNT_TYPE_OAUTH: &str = "oauth";
 pub(super) const ACCOUNT_TYPE_RELAY: &str = "relay";
@@ -175,6 +177,23 @@ pub(super) struct ResetCredit {
     pub(super) status: String,
     pub(super) expires_at: String,
     pub(super) granted_at: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(super) enum ResetCreditConsumeOutcome {
+    Reset,
+    AlreadyRedeemed,
+    NothingToReset,
+    NoCredit,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ResetCreditConsumeResult {
+    pub(super) outcome: ResetCreditConsumeOutcome,
+    pub(super) profile: ProfileSummary,
+    pub(super) credits: ResetCredits,
 }
 
 #[derive(Debug, Clone, Serialize)]

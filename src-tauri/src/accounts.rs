@@ -389,6 +389,181 @@ pub(super) async fn get_profile_reset_credits(
 }
 
 #[tauri::command]
+pub(super) async fn consume_profile_reset_credit(
+    state: State<'_, AppState>,
+    profile_id: String,
+    credit_id: String,
+    idempotency_key: String,
+) -> Result<ResetCreditConsumeResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        consume_profile_reset_credit_internal(&state, &profile_id, &credit_id, &idempotency_key)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn consume_profile_reset_credit_internal(
+    state: &AppState,
+    profile_id: &str,
+    credit_id: &str,
+    idempotency_key: &str,
+) -> Result<ResetCreditConsumeResult, String> {
+    let (credit_id, idempotency_key) = validate_reset_credit_request(credit_id, idempotency_key)?;
+    let connection = open_database(state)?;
+    let (account_type, account_id, mut auth_json) = connection
+        .query_row(
+            "SELECT account_type, account_id, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
+            params![profile_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(database_error)?
+        .ok_or_else(|| "账户不存在。".to_string())?;
+    if account_type != ACCOUNT_TYPE_OAUTH {
+        return Err("中转站账户不支持使用重置卡。".to_string());
+    }
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
+    if codex_cli_token_needs_refresh(&auth_json, Utc::now().timestamp())? {
+        let token = refresh_oauth_token(&extract_refresh_token(&auth_json)?)?;
+        auth_json = build_codex_auth_json(&token)?;
+        persist_codex_cli_auth(
+            state,
+            &connection,
+            profile_id,
+            &auth_json,
+            active_id.as_deref() == Some(profile_id),
+        )?;
+    }
+    let outcome = match consume_reset_credit(&auth_json, &account_id, &credit_id, &idempotency_key)
+    {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if error.authentication_invalidated {
+                connection
+                    .execute(
+                        "UPDATE accounts SET oauth_invalidated_at = ?1 WHERE id = ?2 AND product = 'codex'",
+                        params![now_millis(), profile_id],
+                    )
+                    .map_err(database_error)?;
+            }
+            return Err(error.message);
+        }
+    };
+    drop(connection);
+    let (profile, credits) = refresh_profile_usage_with_credits_internal(state, profile_id)?;
+    let credits = match credits {
+        Some(credits) => credits,
+        None => fetch_reset_credits(&auth_json, &account_id)?,
+    };
+    Ok(ResetCreditConsumeResult {
+        outcome,
+        profile,
+        credits,
+    })
+}
+
+fn validate_reset_credit_request(
+    credit_id: &str,
+    idempotency_key: &str,
+) -> Result<(String, String), String> {
+    let credit_id = credit_id.trim();
+    if credit_id.is_empty() {
+        return Err("重置卡 ID 不能为空。".to_string());
+    }
+    let idempotency_key = Uuid::parse_str(idempotency_key.trim())
+        .map_err(|_| "幂等键必须是有效的 UUID。".to_string())?
+        .to_string();
+    Ok((credit_id.to_string(), idempotency_key))
+}
+
+#[derive(Serialize)]
+struct ResetCreditConsumeRequest<'a> {
+    redeem_request_id: &'a str,
+    credit_id: &'a str,
+}
+
+struct ResetCreditConsumeError {
+    message: String,
+    authentication_invalidated: bool,
+}
+
+fn consume_reset_credit(
+    auth_json: &str,
+    account_id: &str,
+    credit_id: &str,
+    idempotency_key: &str,
+) -> Result<ResetCreditConsumeOutcome, ResetCreditConsumeError> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| ResetCreditConsumeError {
+            message: error.to_string(),
+            authentication_invalidated: false,
+        })?;
+    let request = build_reset_credit_request(
+        &client,
+        reqwest::Method::POST,
+        RESET_CREDITS_CONSUME_URL,
+        auth_json,
+        account_id,
+    )
+    .map_err(|message| ResetCreditConsumeError {
+        message,
+        authentication_invalidated: false,
+    })?;
+    let response = request
+        .json(&ResetCreditConsumeRequest {
+            redeem_request_id: idempotency_key,
+            credit_id,
+        })
+        .send()
+        .map_err(|error| ResetCreditConsumeError {
+            message: format!("重置卡使用失败：{error}"),
+            authentication_invalidated: false,
+        })?;
+    let status = response.status();
+    let body = response.text().map_err(|error| ResetCreditConsumeError {
+        message: format!("无法读取重置卡使用结果：{error}"),
+        authentication_invalidated: false,
+    })?;
+    if !status.is_success() {
+        let message = backend_error_message(&body);
+        return Err(ResetCreditConsumeError {
+            message: if message.is_empty() {
+                format!("重置卡使用失败：HTTP {status}")
+            } else {
+                format!("重置卡使用失败：{message}")
+            },
+            authentication_invalidated: authentication_invalidated(status.as_u16(), &body),
+        });
+    }
+    parse_reset_credit_consume_response(&body).map_err(|message| ResetCreditConsumeError {
+        message,
+        authentication_invalidated: false,
+    })
+}
+
+fn parse_reset_credit_consume_response(body: &str) -> Result<ResetCreditConsumeOutcome, String> {
+    let payload: Value = serde_json::from_str(body)
+        .map_err(|error| format!("重置卡使用响应格式不符合预期：{error}"))?;
+    match payload.get("code").and_then(Value::as_str) {
+        Some("reset") => Ok(ResetCreditConsumeOutcome::Reset),
+        Some("already_redeemed") => Ok(ResetCreditConsumeOutcome::AlreadyRedeemed),
+        Some("nothing_to_reset") => Ok(ResetCreditConsumeOutcome::NothingToReset),
+        Some("no_credit") => Ok(ResetCreditConsumeOutcome::NoCredit),
+        Some(_) => Err("重置卡使用接口返回了未知结果。".to_string()),
+        None => Err("重置卡使用响应缺少 code。".to_string()),
+    }
+}
+
+#[tauri::command]
 pub(super) fn get_profile_auth(
     state: State<'_, AppState>,
     profile_id: String,
@@ -1429,6 +1604,13 @@ pub(super) fn refresh_profile_usage_internal(
     state: &AppState,
     profile_id: &str,
 ) -> Result<ProfileSummary, String> {
+    refresh_profile_usage_with_credits_internal(state, profile_id).map(|(profile, _)| profile)
+}
+
+fn refresh_profile_usage_with_credits_internal(
+    state: &AppState,
+    profile_id: &str,
+) -> Result<(ProfileSummary, Option<ResetCredits>), String> {
     let connection = open_database(state)?;
     let (account_type, account_id, auth_json) = connection
         .query_row(
@@ -1485,7 +1667,10 @@ pub(super) fn refresh_profile_usage_internal(
         )
         .map_err(database_error)?;
     let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
-    get_profile_summary(&connection, profile_id, active_id.as_deref())
+    Ok((
+        get_profile_summary(&connection, profile_id, active_id.as_deref())?,
+        reset_credits,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -1507,10 +1692,40 @@ pub(super) fn fetch_reset_credits(
     auth_json: &str,
     account_id: &str,
 ) -> Result<ResetCredits, String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = build_reset_credit_request(
+        &client,
+        reqwest::Method::GET,
+        RESET_CREDITS_URL,
+        auth_json,
+        account_id,
+    )?
+    .send()
+    .map_err(|error| format!("重置卡查询失败：{error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .map_err(|error| format!("无法读取重置卡信息：{error}"))?;
+    if !status.is_success() {
+        return Err(format!("重置卡查询失败：HTTP {status}"));
+    }
+    parse_reset_credits(&body)
+}
+
+fn build_reset_credit_request(
+    client: &Client,
+    method: reqwest::Method,
+    url: &str,
+    auth_json: &str,
+    account_id: &str,
+) -> Result<reqwest::blocking::RequestBuilder, String> {
     let auth: Value =
         serde_json::from_str(auth_json).map_err(|_| "存档的 auth.json 已损坏。".to_string())?;
-    let access_token = auth
-        .get("tokens")
+    let tokens = auth.get("tokens").and_then(Value::as_object);
+    let access_token = tokens
         .and_then(|tokens| tokens.get("access_token"))
         .and_then(Value::as_str)
         .map(str::trim)
@@ -1521,29 +1736,31 @@ pub(super) fn fetch_reset_credits(
     } else {
         account_id.to_string()
     };
-    let client = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|error| error.to_string())?;
     let mut request = client
-        .get(RESET_CREDITS_URL)
+        .request(method, url)
         .bearer_auth(access_token)
         .header("Accept", "application/json")
-        .header("User-Agent", "codex_cli_rs");
+        .header("User-Agent", "codex-cli");
     if !account_id.is_empty() {
-        request = request.header("ChatGPT-Account-ID", &account_id);
+        request = request.header("ChatGPT-Account-ID", account_id);
     }
-    let response = request
-        .send()
-        .map_err(|error| format!("重置卡查询失败：{error}"))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .map_err(|error| format!("无法读取重置卡信息：{error}"))?;
-    if !status.is_success() {
-        return Err(format!("重置卡查询失败：HTTP {status}"));
+    let fedramp = ["id_token", "access_token"].into_iter().any(|key| {
+        tokens
+            .and_then(|tokens| tokens.get(key))
+            .and_then(Value::as_str)
+            .and_then(decode_jwt_claims)
+            .and_then(|claims| {
+                claims
+                    .get("https://api.openai.com/auth")
+                    .and_then(|auth| auth.get("chatgpt_account_is_fedramp"))
+                    .and_then(Value::as_bool)
+            })
+            .unwrap_or(false)
+    });
+    if fedramp {
+        request = request.header("X-OpenAI-Fedramp", "true");
     }
-    parse_reset_credits(&body)
+    Ok(request)
 }
 
 pub(super) fn parse_reset_credits(body: &str) -> Result<ResetCredits, String> {
@@ -1618,16 +1835,7 @@ fn fetch_account_usage(
         authentication_invalidated: false,
     })?;
     if !status.is_success() {
-        let message = serde_json::from_str::<Value>(&body)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("message")
-                    .or_else(|| value.get("error").and_then(|error| error.get("message")))
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .unwrap_or_else(|| body.trim().to_string());
+        let message = backend_error_message(&body);
         let authentication_invalidated = authentication_invalidated(status.as_u16(), &body);
         return Err(AccountUsageFetchError {
             message: if message.is_empty() {
@@ -1642,6 +1850,19 @@ fn fetch_account_usage(
         message,
         authentication_invalidated: false,
     })
+}
+
+fn backend_error_message(body: &str) -> String {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("message")
+                .or_else(|| value.get("error").and_then(|error| error.get("message")))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| body.trim().to_string())
 }
 
 fn authentication_invalidated(status: u16, body: &str) -> bool {
@@ -2090,6 +2311,139 @@ mod tests {
         assert_eq!(credits.credits[0].title, "Full reset");
         assert_eq!(credits.credits[0].status, "available");
     }
+
+    #[test]
+    fn validates_and_parses_reset_credit_consumption() {
+        for (value, expected) in [
+            ("reset", ResetCreditConsumeOutcome::Reset),
+            (
+                "already_redeemed",
+                ResetCreditConsumeOutcome::AlreadyRedeemed,
+            ),
+            (
+                "nothing_to_reset",
+                ResetCreditConsumeOutcome::NothingToReset,
+            ),
+            ("no_credit", ResetCreditConsumeOutcome::NoCredit),
+        ] {
+            assert_eq!(
+                parse_reset_credit_consume_response(&json!({ "code": value }).to_string()).unwrap(),
+                expected
+            );
+        }
+        assert!(parse_reset_credit_consume_response("{}").is_err());
+        assert!(parse_reset_credit_consume_response(r#"{"code":"unknown"}"#).is_err());
+        assert!(parse_reset_credit_consume_response("not-json").is_err());
+        assert!(validate_reset_credit_request("", &Uuid::new_v4().to_string()).is_err());
+        assert!(validate_reset_credit_request("credit-1", "not-a-uuid").is_err());
+    }
+
+    #[test]
+    fn builds_reset_credit_http_request() {
+        let encode = |value: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value);
+        let claims = json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "account-from-token",
+                "chatgpt_account_is_fedramp": true
+            }
+        });
+        let id_token = format!(
+            "{}.{}.{}",
+            encode(br#"{"alg":"none","typ":"JWT"}"#),
+            encode(claims.to_string().as_bytes()),
+            encode(b"signature")
+        );
+        let auth_json = json!({
+            "tokens": {
+                "id_token": id_token,
+                "access_token": "access-token"
+            }
+        })
+        .to_string();
+        let request = build_reset_credit_request(
+            &Client::new(),
+            reqwest::Method::POST,
+            RESET_CREDITS_CONSUME_URL,
+            &auth_json,
+            "",
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+        assert_eq!(request.method(), reqwest::Method::POST);
+        assert_eq!(request.headers()["Authorization"], "Bearer access-token");
+        assert_eq!(
+            request.headers()["ChatGPT-Account-ID"],
+            "account-from-token"
+        );
+        assert_eq!(request.headers()["X-OpenAI-Fedramp"], "true");
+        assert_eq!(request.headers()["User-Agent"], "codex-cli");
+        let normal_request = build_reset_credit_request(
+            &Client::new(),
+            reqwest::Method::GET,
+            RESET_CREDITS_URL,
+            &oauth_auth("account", "user", "refresh-token", "access-token"),
+            "account",
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+        assert!(normal_request.headers().get("X-OpenAI-Fedramp").is_none());
+        assert_eq!(
+            serde_json::to_value(ResetCreditConsumeRequest {
+                redeem_request_id: "request-id",
+                credit_id: "credit-id",
+            })
+            .unwrap(),
+            json!({
+                "redeem_request_id": "request-id",
+                "credit_id": "credit-id"
+            })
+        );
+    }
+
+    #[test]
+    fn refreshing_a_nonactive_profile_does_not_replace_current_auth() {
+        let directory =
+            std::env::temp_dir().join(format!("cortana-reset-credit-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let state = AppState {
+            database_path: directory.join("app.sqlite3"),
+            default_codex_home: directory.clone(),
+            pending_oauth: Arc::new(Mutex::new(None)),
+        };
+        initialize_database(&state).unwrap();
+        let connection = open_database(&state).unwrap();
+        connection
+            .execute(
+                "INSERT INTO accounts (id, product, account_type, alias, auth_json, created_at, updated_at)
+                 VALUES ('selected', 'codex', 'oauth', 'Selected', 'old', 1, 1)",
+                [],
+            )
+            .unwrap();
+        fs::write(directory.join("auth.json"), "current").unwrap();
+
+        persist_codex_cli_auth(&state, &connection, "selected", "refreshed", false).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(directory.join("auth.json")).unwrap(),
+            "current"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT auth_json FROM accounts WHERE id = 'selected'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "refreshed"
+        );
+        drop(connection);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn updates_profile_alias_auth_and_active_file() {
         let directory =

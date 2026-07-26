@@ -231,6 +231,15 @@ async fn dispatch_command(
         "get_profile_reset_credits" => result!(
             accounts::get_profile_reset_credits(app.state(), arg(&args, "profileId")?).await
         ),
+        "consume_profile_reset_credit" => result!(
+            accounts::consume_profile_reset_credit(
+                app.state(),
+                arg(&args, "profileId")?,
+                arg(&args, "creditId")?,
+                arg(&args, "idempotencyKey")?
+            )
+            .await
+        ),
         "get_profile_auth" => result!(accounts::get_profile_auth(
             app.state(),
             arg(&args, "profileId")?

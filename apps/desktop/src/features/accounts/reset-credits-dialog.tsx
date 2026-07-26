@@ -1,64 +1,130 @@
 import dayjs from 'dayjs';
 import { LoaderCircle, Tickets } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '../../components/ui/empty';
+import { runResetCreditAttempt } from './types';
 import type { Profile, ResetCredit, ResetCredits } from './types';
 
 export function ResetCreditsDialog({
   profile,
   credits,
+  busyCreditId,
+  onConsume,
   onClose,
 }: {
   profile: Profile;
   credits: ResetCredits | null;
+  busyCreditId: string | null;
+  onConsume: (creditId: string, idempotencyKey: string) => Promise<boolean>;
   onClose: () => void;
 }) {
+  const [pending, setPending] = useState<{
+    credit: ResetCredit;
+    idempotencyKey: string;
+  } | null>(null);
+  const consumingRef = useRef(false);
+  const consuming = pending?.credit.id === busyCreditId;
+
+  async function confirmConsumption() {
+    if (!pending) return;
+    const succeeded = await runResetCreditAttempt(consumingRef, () =>
+      onConsume(pending.credit.id, pending.idempotencyKey),
+    );
+    if (succeeded) setPending(null);
+  }
+
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-xl" initialFocus={false}>
+    <Dialog open onOpenChange={(open) => !open && !consuming && onClose()}>
+      <DialogContent className="sm:max-w-xl" initialFocus={false} showCloseButton={!consuming}>
         <DialogHeader>
-          <DialogTitle>{profile.alias} 的重置卡</DialogTitle>
+          <DialogTitle>{pending ? '确认使用重置卡？' : `${profile.alias} 的重置卡`}</DialogTitle>
+          {pending && (
+            <DialogDescription>
+              将立即尝试重置 {profile.alias}{' '}
+              当前可用的额度窗口。若当前没有可重置窗口，卡片不会消耗。
+            </DialogDescription>
+          )}
         </DialogHeader>
-        {credits && credits.availableCount > 0 && (
-          <div className="flex justify-end">
-            <Badge className="h-6 bg-success/10 px-2.5 text-sm text-success">
-              可用{credits.availableCount}次
-            </Badge>
-          </div>
-        )}
-        {!credits ? (
-          <div className="flex min-h-32 items-center justify-center text-muted-foreground">
-            <LoaderCircle className="animate-spin" />
-            <span className="sr-only">正在查询重置卡</span>
-          </div>
+        {pending ? (
+          <DialogFooter>
+            <Button
+              variant="outline"
+              type="button"
+              disabled={consuming}
+              onClick={() => setPending(null)}
+            >
+              取消
+            </Button>
+            <Button type="button" disabled={consuming} onClick={() => void confirmConsumption()}>
+              {consuming && <LoaderCircle className="animate-spin" data-icon="inline-start" />}
+              {consuming ? '正在使用' : '确认使用'}
+            </Button>
+          </DialogFooter>
         ) : (
-          <div className="flex max-h-[60vh] flex-col overflow-y-auto">
-            {credits.credits.length ? (
-              <div className="divide-y rounded-md border">
-                {credits.credits.map((credit) => (
-                  <ResetCreditRow key={credit.id} credit={credit} />
-                ))}
+          <>
+            {credits && credits.availableCount > 0 && (
+              <div className="flex justify-end">
+                <Badge className="h-6 bg-success/10 px-2.5 text-sm text-success">
+                  可用{credits.availableCount}次
+                </Badge>
+              </div>
+            )}
+            {!credits ? (
+              <div className="flex min-h-32 items-center justify-center text-muted-foreground">
+                <LoaderCircle className="animate-spin" />
+                <span className="sr-only">正在查询重置卡</span>
               </div>
             ) : (
-              <Empty className="min-h-32 p-4">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <Tickets />
-                  </EmptyMedia>
-                  <EmptyTitle>暂无重置卡</EmptyTitle>
-                </EmptyHeader>
-              </Empty>
+              <div className="flex max-h-[60vh] flex-col overflow-y-auto">
+                {credits.credits.length ? (
+                  <div className="divide-y rounded-md border">
+                    {credits.credits.map((credit) => (
+                      <ResetCreditRow
+                        key={credit.id}
+                        credit={credit}
+                        disabled={busyCreditId !== null}
+                        onUse={() => setPending({ credit, idempotencyKey: crypto.randomUUID() })}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <Empty className="min-h-32 p-4">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <Tickets />
+                      </EmptyMedia>
+                      <EmptyTitle>暂无重置卡</EmptyTitle>
+                    </EmptyHeader>
+                  </Empty>
+                )}
+              </div>
             )}
-          </div>
+          </>
         )}
       </DialogContent>
     </Dialog>
   );
 }
 
-function ResetCreditRow({ credit }: { credit: ResetCredit }) {
+function ResetCreditRow({
+  credit,
+  disabled,
+  onUse,
+}: {
+  credit: ResetCredit;
+  disabled: boolean;
+  onUse: () => void;
+}) {
   const available = credit.status === 'available';
   return (
     <div className="flex min-h-20 items-center justify-between gap-4 p-4">
@@ -68,7 +134,7 @@ function ResetCreditRow({ credit }: { credit: ResetCredit }) {
           将于 {formatExpiryDate(credit.expiresAt)} 到期
         </span>
       </div>
-      <Button className="px-4" type="button" disabled={!available}>
+      <Button className="px-4" type="button" disabled={!available || disabled} onClick={onUse}>
         {available ? '使用重置' : statusLabel(credit.status)}
       </Button>
     </div>

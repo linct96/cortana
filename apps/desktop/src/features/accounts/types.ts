@@ -55,6 +55,43 @@ export type ResetCredits = {
   credits: ResetCredit[];
 };
 
+export type ResetCreditConsumeOutcome = 'reset' | 'alreadyRedeemed' | 'nothingToReset' | 'noCredit';
+
+export type ResetCreditConsumeResult = {
+  outcome: ResetCreditConsumeOutcome;
+  profile: Profile;
+  credits: ResetCredits;
+};
+
+export function resetCreditOutcomeNotice(outcome: ResetCreditConsumeOutcome): {
+  kind: 'success' | 'info';
+  message: string;
+} {
+  switch (outcome) {
+    case 'reset':
+      return { kind: 'success', message: '重置成功。' };
+    case 'alreadyRedeemed':
+      return { kind: 'success', message: '重置已完成，额度已刷新。' };
+    case 'nothingToReset':
+      return { kind: 'info', message: '当前没有可重置的额度窗口，重置卡未消耗。' };
+    case 'noCredit':
+      return { kind: 'info', message: '已无可用重置卡。' };
+  }
+}
+
+export async function runResetCreditAttempt(
+  lock: { current: boolean },
+  attempt: () => Promise<boolean>,
+) {
+  if (lock.current) return false;
+  lock.current = true;
+  try {
+    return await attempt();
+  } finally {
+    lock.current = false;
+  }
+}
+
 export type UsageRefreshResult = {
   profile: Profile;
   refreshed: boolean;

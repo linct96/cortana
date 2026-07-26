@@ -266,7 +266,15 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
         <ResetCreditsDialog
           profile={account.resetCreditsProfile}
           credits={account.resetCredits}
-          onClose={() => account.setResetCreditsProfile(null)}
+          busyCreditId={
+            account.busy?.startsWith('consume-reset-credit:')
+              ? account.busy.slice('consume-reset-credit:'.length)
+              : null
+          }
+          onConsume={account.consumeResetCredit}
+          onClose={() => {
+            account.setResetCreditsProfile(null);
+          }}
         />
       )}
       {account.quotaProfile && (
