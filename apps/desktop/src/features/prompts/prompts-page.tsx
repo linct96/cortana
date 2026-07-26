@@ -1,11 +1,11 @@
 import { Link } from '@tanstack/react-router';
 import {
+  ArrowLeftRight,
   Ellipsis,
   FileText,
   LoaderCircle,
   Pencil,
   Plus,
-  Power,
   Trash2,
   TriangleAlert,
   Upload,
@@ -269,7 +269,7 @@ function PromptRow({
       <div className="pointer-events-none flex min-w-18 justify-end gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
         {!profile.isActive && (
           <Button size="icon" type="button" onClick={onActivate} disabled={busy}>
-            {busy ? <LoaderCircle className="animate-spin" /> : <Power />}
+            {busy ? <LoaderCircle className="animate-spin" /> : <ArrowLeftRight />}
             <span className="sr-only">启用</span>
           </Button>
         )}
