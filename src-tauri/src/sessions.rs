@@ -806,9 +806,11 @@ fn source_name(source: &Value) -> String {
 
 fn stop_child(child: &mut Child) -> String {
     #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("taskkill")
-        .args(["/PID", &child.id().to_string(), "/T", "/F"])
-        .output();
+    let _ = codex_command(
+        Path::new("taskkill"),
+        &["/PID", &child.id().to_string(), "/T", "/F"],
+    )
+    .output();
     #[cfg(not(target_os = "windows"))]
     let _ = child.kill();
     let _ = child.wait();
