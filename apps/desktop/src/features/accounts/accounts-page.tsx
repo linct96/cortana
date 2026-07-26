@@ -14,6 +14,13 @@ import { productName, useAppShell } from '../../components/app-shell-context';
 import { PageHeader, PageShell } from '../../components/page-shell';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
+import {
+  Empty,
+  EmptyContent,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '../../components/ui/empty';
 import { Separator } from '../../components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { AddAccountDialog, ConfirmAccountDialog, EditAccountDialog } from './account-dialog';
@@ -243,6 +250,10 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
       {account.confirm && (
         <ConfirmAccountDialog
           confirm={account.confirm}
+          busy={
+            account.busy ===
+            `${account.confirm.kind === 'delete' ? 'delete' : 'switch'}:${account.confirm.profile.id}`
+          }
           onClose={() => account.setConfirm(null)}
           onConfirm={() =>
             account.confirm?.kind === 'delete'
@@ -272,14 +283,18 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
 
 function EmptyState({ onAdd }: { onAdd?: () => void }) {
   return (
-    <div className="flex min-h-52 flex-col items-center justify-center gap-3 border-y text-sm text-muted-foreground">
-      <div className="grid size-11 place-items-center rounded-full bg-secondary text-primary">
-        <LogIn size={22} />
-      </div>
-      <strong className="text-sm font-medium text-foreground">还没有账户档案</strong>
-      <Button variant="secondary" className="text-primary" type="button" onClick={onAdd}>
-        <Plus data-icon="inline-start" /> 添加账号
-      </Button>
-    </div>
+    <Empty className="min-h-52 rounded-none border-y">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <LogIn />
+        </EmptyMedia>
+        <EmptyTitle>还没有账户档案</EmptyTitle>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button variant="secondary" className="text-primary" type="button" onClick={onAdd}>
+          <Plus data-icon="inline-start" /> 添加账号
+        </Button>
+      </EmptyContent>
+    </Empty>
   );
 }

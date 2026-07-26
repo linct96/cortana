@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../components/ui/dialog';
+import { Field, FieldGroup, FieldLabel } from '../../components/ui/field';
 import { Input } from '../../components/ui/input';
 import {
   InputGroup,
@@ -65,24 +66,27 @@ export function AddAccountDialog({
     return (
       <AppDialog title="添加账号" onClose={onClose}>
         <form className="flex flex-col gap-4" onSubmit={onSubmit}>
-          <Field label="别名" htmlFor="new-alias">
-            <Input
-              id="new-alias"
-              value={alias}
-              onChange={(event) => setAlias(event.target.value)}
-              placeholder="例如：工作账户"
-            />
-          </Field>
-          {oauthMessage && (
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              {busy === 'oauth' && <LoaderCircle size={15} className="animate-spin" />}{' '}
-              {oauthMessage}
-            </p>
-          )}
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="new-alias">别名</FieldLabel>
+              <Input
+                id="new-alias"
+                value={alias}
+                onChange={(event) => setAlias(event.target.value)}
+                placeholder="例如：工作账户"
+              />
+            </Field>
+            {oauthMessage && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                {busy === 'oauth' && <LoaderCircle size={15} className="animate-spin" />}{' '}
+                {oauthMessage}
+              </p>
+            )}
+          </FieldGroup>
           <DialogFooter>
             <CancelButton />
             <Button type="submit" disabled={saving}>
-              {saving && <LoaderCircle size={16} className="animate-spin" />}
+              {saving && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
               在浏览器中授权
             </Button>
           </DialogFooter>
@@ -120,66 +124,72 @@ export function AddAccountDialog({
               </TabsTrigger>
             ))}
           </TabsList>
-          <Field label="别名" htmlFor="new-alias">
-            <Input
-              id="new-alias"
-              value={alias}
-              onChange={(event) => setAlias(event.target.value)}
-              placeholder="例如：工作账户"
-            />
-          </Field>
-          {product === 'codex' && (
-            <TabsContent value="paste">
-              <Field label="auth.json" htmlFor="auth-json">
-                <Textarea
-                  id="auth-json"
-                  className="min-h-0 resize-none field-sizing-fixed font-mono text-xs"
-                  value={authJson}
-                  onChange={(event) => setAuthJson(event.target.value)}
-                  placeholder='{"tokens":{"refresh_token":"..."}}'
-                  rows={2}
-                  autoComplete="off"
-                  spellCheck={false}
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="new-alias">别名</FieldLabel>
+              <Input
+                id="new-alias"
+                value={alias}
+                onChange={(event) => setAlias(event.target.value)}
+                placeholder="例如：工作账户"
+              />
+            </Field>
+            {product === 'codex' && (
+              <TabsContent value="paste">
+                <Field>
+                  <FieldLabel htmlFor="auth-json">auth.json</FieldLabel>
+                  <Textarea
+                    id="auth-json"
+                    className="min-h-0 resize-none field-sizing-fixed font-mono text-xs"
+                    value={authJson}
+                    onChange={(event) => setAuthJson(event.target.value)}
+                    placeholder='{"tokens":{"refresh_token":"..."}}'
+                    rows={2}
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                  />
+                </Field>
+              </TabsContent>
+            )}
+            <TabsContent value="relay" className="flex flex-col gap-4">
+              <Field>
+                <FieldLabel htmlFor="relay-api-key">API Key</FieldLabel>
+                <SecretInput
+                  id="relay-api-key"
+                  visible={showRelayApiKey}
+                  value={relayApiKey}
+                  onChange={setRelayApiKey}
+                  onToggle={() => setShowRelayApiKey((visible) => !visible)}
+                  required
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="relay-api-base-url">API 地址</FieldLabel>
+                <Input
+                  id="relay-api-base-url"
+                  type="url"
+                  value={relayApiBaseUrl}
+                  onChange={(event) => setRelayApiBaseUrl(event.target.value)}
+                  placeholder="https://example.com/v1"
+                  autoComplete="url"
                   required
                 />
               </Field>
             </TabsContent>
-          )}
-          <TabsContent value="relay" className="flex flex-col gap-4">
-            <Field label="API Key" htmlFor="relay-api-key">
-              <SecretInput
-                id="relay-api-key"
-                visible={showRelayApiKey}
-                value={relayApiKey}
-                onChange={setRelayApiKey}
-                onToggle={() => setShowRelayApiKey((visible) => !visible)}
-                required
-              />
-            </Field>
-            <Field label="API 地址" htmlFor="relay-api-base-url">
-              <Input
-                id="relay-api-base-url"
-                type="url"
-                value={relayApiBaseUrl}
-                onChange={(event) => setRelayApiBaseUrl(event.target.value)}
-                placeholder="https://example.com/v1"
-                autoComplete="url"
-                required
-              />
-            </Field>
-          </TabsContent>
-          <TabsContent value="browser" className="empty:hidden">
-            {oauthMessage && (
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                {busy === 'oauth' && <LoaderCircle size={15} className="animate-spin" />}{' '}
-                {oauthMessage}
-              </p>
-            )}
-          </TabsContent>
+            <TabsContent value="browser" className="empty:hidden">
+              {oauthMessage && (
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  {busy === 'oauth' && <LoaderCircle size={15} className="animate-spin" />}{' '}
+                  {oauthMessage}
+                </p>
+              )}
+            </TabsContent>
+          </FieldGroup>
           <DialogFooter>
             <CancelButton disabled={busy === 'auth-json' || busy === 'relay'} />
             <Button type="submit" disabled={saving}>
-              {saving && <LoaderCircle size={16} className="animate-spin" />}
+              {saving && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
               {addMode === 'browser' ? '在浏览器中授权' : '确认'}
             </Button>
           </DialogFooter>
@@ -223,57 +233,63 @@ export function EditAccountDialog({
   return (
     <AppDialog title="编辑账户" contentClassName="sm:max-w-2xl" onClose={onClose}>
       <form className="flex flex-col gap-4" onSubmit={onSubmit}>
-        <Field label="别名" htmlFor="editing-alias">
-          <Input
-            id="editing-alias"
-            value={alias}
-            onChange={(event) => setAlias(event.target.value)}
-            placeholder={
-              editing.accountType === 'relay'
-                ? '留空则使用 API 主机名'
-                : editing.product !== 'codex'
-                  ? '例如：工作账户'
-                  : '留空则使用邮箱账号'
-            }
-            required={editing.product !== 'codex' && editing.accountType !== 'relay'}
-          />
-        </Field>
-        {editing.accountType === 'relay' ? (
-          <>
-            <Field label="API Key" htmlFor="editing-relay-api-key">
-              <SecretInput
-                id="editing-relay-api-key"
-                visible={showRelayApiKey}
-                value={relayApiKey}
-                onChange={setRelayApiKey}
-                onToggle={() => setShowRelayApiKey((visible) => !visible)}
-                placeholder="留空则保留现有 API Key"
-              />
-            </Field>
-            <Field label="API 地址" htmlFor="editing-relay-api-base-url">
-              <Input
-                id="editing-relay-api-base-url"
-                type="url"
-                value={relayApiBaseUrl}
-                onChange={(event) => setRelayApiBaseUrl(event.target.value)}
-                autoComplete="url"
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="editing-alias">别名</FieldLabel>
+            <Input
+              id="editing-alias"
+              value={alias}
+              onChange={(event) => setAlias(event.target.value)}
+              placeholder={
+                editing.accountType === 'relay'
+                  ? '留空则使用 API 主机名'
+                  : editing.product !== 'codex'
+                    ? '例如：工作账户'
+                    : '留空则使用邮箱账号'
+              }
+              required={editing.product !== 'codex' && editing.accountType !== 'relay'}
+            />
+          </Field>
+          {editing.accountType === 'relay' ? (
+            <>
+              <Field>
+                <FieldLabel htmlFor="editing-relay-api-key">API Key</FieldLabel>
+                <SecretInput
+                  id="editing-relay-api-key"
+                  visible={showRelayApiKey}
+                  value={relayApiKey}
+                  onChange={setRelayApiKey}
+                  onToggle={() => setShowRelayApiKey((visible) => !visible)}
+                  placeholder="留空则保留现有 API Key"
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="editing-relay-api-base-url">API 地址</FieldLabel>
+                <Input
+                  id="editing-relay-api-base-url"
+                  type="url"
+                  value={relayApiBaseUrl}
+                  onChange={(event) => setRelayApiBaseUrl(event.target.value)}
+                  autoComplete="url"
+                  required
+                />
+              </Field>
+            </>
+          ) : (
+            <Field>
+              <FieldLabel htmlFor="editing-auth-json">auth.json</FieldLabel>
+              <Textarea
+                id="editing-auth-json"
+                className="h-80 resize-y field-sizing-fixed font-mono text-xs"
+                value={authJson}
+                onChange={(event) => setAuthJson(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
                 required
               />
             </Field>
-          </>
-        ) : (
-          <Field label="auth.json" htmlFor="editing-auth-json">
-            <Textarea
-              id="editing-auth-json"
-              className="h-80 resize-y field-sizing-fixed font-mono text-xs"
-              value={authJson}
-              onChange={(event) => setAuthJson(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-              required
-            />
-          </Field>
-        )}
+          )}
+        </FieldGroup>
         <DialogFooter>
           <CancelButton />
           <Button type="submit" disabled={busy === `edit:${editing.id}`}>
@@ -288,10 +304,12 @@ export function EditAccountDialog({
 
 export function ConfirmAccountDialog({
   confirm,
+  busy,
   onConfirm,
   onClose,
 }: {
   confirm: NonNullable<PendingConfirm>;
+  busy: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -299,7 +317,7 @@ export function ConfirmAccountDialog({
   return (
     <AppDialog
       title={confirm.kind === 'delete' ? '移除账户档案' : '覆盖当前登录状态'}
-      onClose={onClose}
+      onClose={() => !busy && onClose()}
     >
       <div>
         <p className="text-sm leading-6 text-muted-foreground">
@@ -314,12 +332,14 @@ export function ConfirmAccountDialog({
             : `当前 ${product} 登录或 API 配置在应用外被修改。继续会立即切换到“${confirm.profile.alias}”。`}
         </p>
         <DialogFooter>
-          <CancelButton />
+          <CancelButton disabled={busy} />
           <Button
             variant={confirm.kind === 'delete' ? 'destructive' : 'default'}
             type="button"
             onClick={onConfirm}
+            disabled={busy}
           >
+            {busy && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
             {confirm.kind === 'delete' ? '移除' : '仍要切换'}
           </Button>
         </DialogFooter>
@@ -366,25 +386,6 @@ function SecretInput({
         </InputGroupButton>
       </InputGroupAddon>
     </InputGroup>
-  );
-}
-
-function Field({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <label className="text-sm font-medium" htmlFor={htmlFor}>
-        {label}
-      </label>
-      {children}
-    </div>
   );
 }
 
