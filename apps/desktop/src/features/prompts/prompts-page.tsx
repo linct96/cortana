@@ -25,6 +25,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../../components/ui/dropdown-menu';
+import {
+  Empty,
+  EmptyContent,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '../../components/ui/empty';
 import { appError, cn } from '../../utils';
 import { ConfirmDialog, NameDialogForm } from './prompt-dialogs';
 import type { AgentsProfile, AgentsStatus } from './types';
@@ -52,16 +59,27 @@ function PromptsContent() {
   const [importName, setImportName] = useState('当前方案');
   const [deleting, setDeleting] = useState<AgentsProfile | null>(null);
   const [forceProfile, setForceProfile] = useState<AgentsProfile | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setStatus(await invoke<AgentsStatus>('get_agents_status'));
+    setError(null);
+    try {
+      setStatus(await invoke<AgentsStatus>('get_agents_status'));
+    } catch (caught) {
+      const message = appError(caught);
+      setError(message);
+      toast.error(message);
+    }
   }, []);
 
   useEffect(() => {
-    load()
-      .catch((error) => toast.error(appError(error)))
-      .finally(() => setBusy(null));
+    void load().finally(() => setBusy(null));
   }, [load]);
+
+  function retryLoad() {
+    setBusy('load');
+    void load().finally(() => setBusy(null));
+  }
 
   async function importCurrent(event: FormEvent) {
     event.preventDefault();
@@ -130,10 +148,26 @@ function PromptsContent() {
 
       <section className="min-h-0 flex-1 overflow-y-auto">
         {busy === 'load' ? (
-          <div className="grid min-h-52 place-items-center border-y text-sm text-muted-foreground">
-            <span className="flex items-center gap-2">
-              <LoaderCircle className="animate-spin" /> 正在读取提示词
-            </span>
+          <Empty className="min-h-52 rounded-none border-y">
+            <EmptyHeader>
+              <EmptyMedia>
+                <LoaderCircle className="animate-spin" />
+              </EmptyMedia>
+              <EmptyTitle>正在读取提示词</EmptyTitle>
+            </EmptyHeader>
+          </Empty>
+        ) : error && !status ? (
+          <div className="px-4 py-6 sm:px-8 lg:px-12">
+            <Alert variant="destructive">
+              <TriangleAlert />
+              <AlertTitle>无法读取提示词</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+              <AlertAction>
+                <Button variant="outline" size="sm" onClick={retryLoad}>
+                  重试
+                </Button>
+              </AlertAction>
+            </Alert>
           </div>
         ) : status?.profiles.length ? (
           <div className="flex w-full flex-col gap-3 px-4 pt-6 pb-10 sm:px-8 lg:px-12">
@@ -148,15 +182,19 @@ function PromptsContent() {
             ))}
           </div>
         ) : (
-          <div className="flex min-h-52 flex-col items-center justify-center gap-3 border-y text-sm text-muted-foreground">
-            <div className="grid size-11 place-items-center rounded-full bg-secondary text-primary">
-              <FileText size={22} />
-            </div>
-            <strong className="text-sm font-medium text-foreground">还没有提示词方案</strong>
-            <Link to="/prompts/new" className={buttonVariants({ variant: 'secondary' })}>
-              <Plus data-icon="inline-start" /> 新建提示词
-            </Link>
-          </div>
+          <Empty className="min-h-52 rounded-none border-y">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <FileText />
+              </EmptyMedia>
+              <EmptyTitle>还没有提示词方案</EmptyTitle>
+            </EmptyHeader>
+            <EmptyContent>
+              <Link to="/prompts/new" className={buttonVariants({ variant: 'secondary' })}>
+                <Plus data-icon="inline-start" /> 新建提示词
+              </Link>
+            </EmptyContent>
+          </Empty>
         )}
       </section>
 

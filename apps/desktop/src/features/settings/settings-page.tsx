@@ -1,8 +1,9 @@
-import { ExternalLink, FolderOpen, RefreshCw } from 'lucide-react';
+import { ExternalLink, FolderOpen, RefreshCw, TriangleAlert } from 'lucide-react';
 import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { invoke, isTauri } from '../../backend';
 import { PageHeader, PageShell } from '../../components/page-shell';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -71,22 +72,42 @@ function SettingsContent() {
   const [webPort, setWebPort] = useState('11456');
   const [webPortError, setWebPortError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>('loading');
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
-    Promise.all([
+    let active = true;
+    setBusy('loading');
+    setLoadError(null);
+    void Promise.allSettled([
       invoke<AppStatus>('get_app_status'),
       invoke<UsageRefreshSettings>('get_usage_refresh_settings'),
       invoke<TerminalApp>('get_terminal_app'),
     ])
-      .then(([nextStatus, nextUsageRefresh, nextTerminalApp]) => {
-        setStatus(nextStatus);
-        setUsageRefresh(nextUsageRefresh);
-        setTerminalApp(nextTerminalApp);
-        setWebPort(String(nextStatus.webAccess.port));
+      .then(([statusResult, usageRefreshResult, terminalAppResult]) => {
+        if (!active) return;
+        if (statusResult.status === 'fulfilled') {
+          setStatus(statusResult.value);
+          setWebPort(String(statusResult.value.webAccess.port));
+        }
+        if (usageRefreshResult.status === 'fulfilled') setUsageRefresh(usageRefreshResult.value);
+        if (terminalAppResult.status === 'fulfilled') setTerminalApp(terminalAppResult.value);
+        const failure = [statusResult, usageRefreshResult, terminalAppResult].find(
+          (result) => result.status === 'rejected',
+        );
+        if (failure?.status === 'rejected') {
+          const message = appError(failure.reason);
+          setLoadError(message);
+          toast.error(message);
+        }
       })
-      .catch((error) => toast.error(appError(error)))
-      .finally(() => setBusy(null));
-  }, []);
+      .finally(() => {
+        if (active) setBusy(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [loadAttempt]);
 
   async function saveUsageRefresh(next: UsageRefreshSettings) {
     setBusy('usage-refresh');
@@ -164,9 +185,34 @@ function SettingsContent() {
     }
   }
 
+  async function openDataDirectory() {
+    try {
+      await invoke('reveal_data_directory');
+    } catch (error) {
+      toast.error(appError(error));
+    }
+  }
+
   return (
     <div className="w-full px-4 pt-6 pb-10 sm:px-8 lg:px-12">
       <div className="flex flex-col gap-6">
+        {loadError && (
+          <Alert variant="destructive">
+            <TriangleAlert />
+            <AlertTitle>部分设置读取失败</AlertTitle>
+            <AlertDescription>{loadError}</AlertDescription>
+            <AlertAction>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy === 'loading'}
+                onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+              >
+                重试
+              </Button>
+            </AlertAction>
+          </Alert>
+        )}
         <section aria-labelledby="app-settings-heading" className="flex flex-col gap-2">
           <h2 id="app-settings-heading" className="px-1 text-sm font-medium text-foreground">
             应用设置
@@ -182,7 +228,7 @@ function SettingsContent() {
                 className="justify-self-end"
                 checked={status?.autostartEnabled ?? false}
                 onCheckedChange={(enabled) => void toggleAutostart(enabled)}
-                disabled={busy === 'autostart' || busy === 'loading'}
+                disabled={!status || busy === 'autostart' || busy === 'loading'}
               />
             </div>
             <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4">
@@ -316,7 +362,7 @@ function SettingsContent() {
                 className="justify-self-end"
                 checked={status?.webAccess.enabled ?? false}
                 onCheckedChange={(enabled) => void saveWebAccess(enabled)}
-                disabled={!isTauri || busy === 'web' || busy === 'loading'}
+                disabled={!isTauri || !status || busy === 'web' || busy === 'loading'}
               />
             </div>
 
@@ -356,7 +402,7 @@ function SettingsContent() {
                 className="w-fit justify-self-end"
                 variant="outline"
                 type="button"
-                onClick={() => void invoke('reveal_data_directory')}
+                onClick={() => void openDataDirectory()}
               >
                 <FolderOpen data-icon="inline-start" /> 打开数据目录
               </Button>

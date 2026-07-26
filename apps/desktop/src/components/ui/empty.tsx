@@ -60,10 +60,20 @@ function EmptyTitle({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="empty-title"
-      className={cn('cn-font-heading text-sm font-medium tracking-tight', className)}
+      className={cn('text-sm font-medium tracking-tight', className)}
       {...props}
     />
   );
 }
 
-export { Empty, EmptyHeader, EmptyTitle, EmptyMedia };
+function EmptyContent({ className, ...props }: React.ComponentProps<'div'>) {
+  return (
+    <div
+      data-slot="empty-content"
+      className={cn('flex w-full max-w-sm flex-col items-center gap-4', className)}
+      {...props}
+    />
+  );
+}
+
+export { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle };

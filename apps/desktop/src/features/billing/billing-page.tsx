@@ -39,6 +39,7 @@ export default function BillingPage() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ model: ModelPricing; isNew: boolean } | null>(null);
   const [deleting, setDeleting] = useState<ModelPricing | null>(null);
+  const [deletingBusy, setDeletingBusy] = useState(false);
   const [importing, setImporting] = useState(false);
 
   const loadPricing = useCallback(async () => {
@@ -59,6 +60,7 @@ export default function BillingPage() {
 
   async function deletePricing() {
     if (!deleting) return;
+    setDeletingBusy(true);
     try {
       await invoke('delete_model_pricing', { modelId: deleting.modelId });
       setDeleting(null);
@@ -66,6 +68,8 @@ export default function BillingPage() {
       toast.success('模型定价已删除。');
     } catch (caught) {
       toast.error(appError(caught));
+    } finally {
+      setDeletingBusy(false);
     }
   }
 
@@ -94,6 +98,7 @@ export default function BillingPage() {
         editing={editing}
         importing={importing}
         deleting={deleting}
+        deletingBusy={deletingBusy}
         onRetry={loadPricing}
         onEdit={(model) => setEditing({ model, isNew: false })}
         onCloseEditor={() => setEditing(null)}
@@ -114,6 +119,7 @@ function BillingContent({
   editing,
   importing,
   deleting,
+  deletingBusy,
   onRetry,
   onEdit,
   onCloseEditor,
@@ -129,6 +135,7 @@ function BillingContent({
   editing: { model: ModelPricing; isNew: boolean } | null;
   importing: boolean;
   deleting: ModelPricing | null;
+  deletingBusy: boolean;
   onRetry: () => Promise<void>;
   onEdit: (model: ModelPricing) => void;
   onCloseEditor: () => void;
@@ -181,7 +188,7 @@ function BillingContent({
       )}
       {importing && <ModelsDevDialog onClose={onCloseImport} onImported={onRetry} />}
       {deleting && (
-        <Dialog open onOpenChange={(open) => !open && onCloseDelete()}>
+        <Dialog open onOpenChange={(open) => !open && !deletingBusy && onCloseDelete()}>
           <DialogContent initialFocus={false}>
             <DialogHeader>
               <DialogTitle>删除模型定价</DialogTitle>
@@ -190,10 +197,16 @@ function BillingContent({
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button variant="ghost" type="button" onClick={onCloseDelete}>
+              <Button variant="ghost" type="button" onClick={onCloseDelete} disabled={deletingBusy}>
                 取消
               </Button>
-              <Button variant="destructive" type="button" onClick={() => void onDelete()}>
+              <Button
+                variant="destructive"
+                type="button"
+                onClick={() => void onDelete()}
+                disabled={deletingBusy}
+              >
+                {deletingBusy && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
                 删除
               </Button>
             </DialogFooter>
