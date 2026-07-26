@@ -149,7 +149,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
             transaction
                 .execute(
                     "UPDATE accounts SET sort_order = ?1 WHERE id = ?2",
-                    params![sort_order, profile_id],
+                    params![sort_order as i64, profile_id],
                 )
                 .map_err(database_error)?;
         }

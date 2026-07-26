@@ -4,6 +4,7 @@ use super::{
     db::*,
     local_web, *,
 };
+use std::fmt::Write as _;
 
 pub(super) const CLAUDE_OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 pub(super) const CLAUDE_OAUTH_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
@@ -975,7 +976,11 @@ fn expires_at(expires_in: Option<i64>) -> Option<i64> {
 }
 
 fn token_fingerprint(token: &str) -> String {
-    format!("token:{:x}", Sha256::digest(token.as_bytes()))
+    let mut fingerprint = String::from("token:");
+    for byte in Sha256::digest(token.as_bytes()) {
+        write!(&mut fingerprint, "{byte:02x}").expect("writing to a string cannot fail");
+    }
+    fingerprint
 }
 
 fn non_empty(value: &str) -> Option<String> {
