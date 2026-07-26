@@ -97,24 +97,31 @@ export function useAccountManager(product: AccountProduct) {
 
   async function startOAuthProgress() {
     stopOAuthProgress();
-    oauthCleanupRef.current = await listenOAuthProgress<OAuthProgress>((payload) => {
-      setOauthMessage(payload.message);
-      if (payload.stage === 'success') {
+    oauthCleanupRef.current = await listenOAuthProgress<OAuthProgress>(
+      (payload) => {
+        setOauthMessage(payload.message);
+        if (payload.stage === 'success') {
+          stopOAuthProgress();
+          setBusy(null);
+          closeAddDialog();
+          toast.success(payload.message);
+          void (payload.profile ? refreshNewAccount(payload.profile) : refresh());
+        } else if (payload.stage === 'error') {
+          stopOAuthProgress();
+          setBusy(null);
+          toast.error(payload.message);
+        } else if (payload.stage === 'cancelled') {
+          stopOAuthProgress();
+          setBusy(null);
+          closeAddDialog();
+        }
+      },
+      (error) => {
         stopOAuthProgress();
         setBusy(null);
-        closeAddDialog();
-        toast.success(payload.message);
-        void (payload.profile ? refreshNewAccount(payload.profile) : refresh());
-      } else if (payload.stage === 'error') {
-        stopOAuthProgress();
-        setBusy(null);
-        toast.error(payload.message);
-      } else if (payload.stage === 'cancelled') {
-        stopOAuthProgress();
-        setBusy(null);
-        closeAddDialog();
-      }
-    });
+        toast.error(appError(error));
+      },
+    );
   }
 
   const activeProfile =

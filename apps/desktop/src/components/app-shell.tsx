@@ -45,6 +45,7 @@ export function AppShell() {
   const previousMainPath = useRef<MainPath>('/accounts');
   const [activeProduct, setActiveProduct] = useState<AccountProduct>('codex');
   const [cliAvailable, setCliAvailable] = useState<boolean | null>(null);
+  const [configDirty, setConfigDirty] = useState(false);
 
   useEffect(() => {
     const nextPath = mainPathFor(pathname);
@@ -66,6 +67,8 @@ export function AppShell() {
         setActiveProduct,
         cliAvailable,
         setCliAvailable,
+        configDirty,
+        setConfigDirty,
       }}
     >
       <div className="relative flex h-screen min-h-0 bg-background text-foreground">
@@ -124,13 +127,17 @@ export function AppContent({ children }: { children: ReactNode }) {
 function ProductMenu() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const { activeProduct, setActiveProduct, previousMainPath, setCliAvailable } = useAppShell();
+  const { activeProduct, setActiveProduct, previousMainPath, setCliAvailable, configDirty } =
+    useAppShell();
   const claude = activeProduct === 'claude';
   const antigravity = activeProduct === 'antigravity';
   const grok = activeProduct === 'grok';
 
   async function selectProduct(product: AccountProduct) {
     if (product === activeProduct) return;
+    if (configDirty && !window.confirm('当前配置的修改尚未保存，确定放弃并切换产品吗？')) {
+      return;
+    }
     try {
       await invoke('set_active_product', { product });
       setActiveProduct(product);
@@ -206,6 +213,14 @@ function CliAlert({
   onAvailableChange: (available: boolean) => void;
 }) {
   const [checking, setChecking] = useState(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const check = useCallback(
     async (minimumDuration = 0) => {
@@ -215,11 +230,11 @@ function CliAlert({
           invoke<boolean>(`is_${product}_cli_available`),
           new Promise((resolve) => setTimeout(resolve, minimumDuration)),
         ]);
-        onAvailableChange(isAvailable);
+        if (mounted.current) onAvailableChange(isAvailable);
       } catch (error) {
-        toast.error(appError(error));
+        if (mounted.current) toast.error(appError(error));
       } finally {
-        setChecking(false);
+        if (mounted.current) setChecking(false);
       }
     },
     [onAvailableChange, product],

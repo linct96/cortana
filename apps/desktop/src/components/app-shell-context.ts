@@ -10,6 +10,8 @@ export type AppShellContextValue = {
   setActiveProduct: Dispatch<SetStateAction<AccountProduct>>;
   cliAvailable: boolean | null;
   setCliAvailable: Dispatch<SetStateAction<boolean | null>>;
+  configDirty: boolean;
+  setConfigDirty: Dispatch<SetStateAction<boolean>>;
 };
 
 export const AppShellContext = createContext<AppShellContextValue | null>(null);
