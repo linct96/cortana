@@ -92,6 +92,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
               antigravity_quota_json TEXT,
               usage_updated_at INTEGER,
               usage_refresh_attempted_at INTEGER,
+              oauth_invalidated_at INTEGER,
               reset_credits_available_count INTEGER,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL,
@@ -121,6 +122,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
         ("antigravity_quota_json", "TEXT"),
         ("usage_updated_at", "INTEGER"),
         ("usage_refresh_attempted_at", "INTEGER"),
+        ("oauth_invalidated_at", "INTEGER"),
         ("reset_credits_available_count", "INTEGER"),
     ] {
         ensure_account_column(&connection, name, definition)?;

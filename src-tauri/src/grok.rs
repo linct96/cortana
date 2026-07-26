@@ -689,6 +689,7 @@ fn detected_profile(credential: &Value) -> Result<ProfileSummary, String> {
         antigravity_quota: None,
         usage_updated_at: None,
         reset_credits_available_count: None,
+        needs_reauthorization: false,
         is_renewable: true,
         is_active: true,
         last_used_at: None,

@@ -14,6 +14,7 @@ export type Profile = {
   antigravityQuota: AntigravityQuota | null;
   usageUpdatedAt: number | null;
   resetCreditsAvailableCount: number | null;
+  needsReauthorization: boolean;
   isRenewable: boolean;
   isActive: boolean;
   lastUsedAt: number | null;
