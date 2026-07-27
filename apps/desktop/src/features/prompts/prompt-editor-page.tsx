@@ -1,9 +1,10 @@
 import { Link, useBlocker, useNavigate, useParams } from '@tanstack/react-router';
 import CodeMirror, { EditorView } from '@uiw/react-codemirror';
 import { ArrowLeft, LoaderCircle, Save } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { invoke } from '../../backend';
+import { useAppShell } from '../../components/app-shell-context';
 import { PageHeader, PageShell } from '../../components/page-shell';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -12,26 +13,30 @@ import { Field, FieldGroup, FieldLabel } from '../../components/ui/field';
 import { Input } from '../../components/ui/input';
 import { appError } from '../../utils';
 import { ConfirmDialog } from './prompt-dialogs';
-import type { AgentsProfile, AgentsStatus } from './types';
+import { instructionFilename, type AgentsProfile, type AgentsStatus } from './types';
 
-const editorExtensions = [
-  EditorView.lineWrapping,
-  EditorView.contentAttributes.of({ 'aria-label': 'AGENTS.md 内容', spellcheck: 'false' }),
-  EditorView.theme({
-    '&': { backgroundColor: 'transparent', color: 'var(--foreground)', fontSize: '12px' },
-    '&.cm-focused': { outline: 'none' },
-    '.cm-content': {
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-      padding: '8px 0',
-    },
-    '.cm-gutters': {
-      backgroundColor: 'var(--muted)',
-      borderRight: '1px solid var(--border)',
-      color: 'var(--muted-foreground)',
-    },
-    '.cm-activeLineGutter': { backgroundColor: 'var(--accent)' },
-  }),
-];
+const editorTheme = EditorView.theme({
+  '&': { backgroundColor: 'transparent', color: 'var(--foreground)', fontSize: '12px' },
+  '&.cm-focused': { outline: 'none' },
+  '.cm-content': {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    padding: '8px 0',
+  },
+  '.cm-gutters': {
+    backgroundColor: 'var(--muted)',
+    borderRight: '1px solid var(--border)',
+    color: 'var(--muted-foreground)',
+  },
+  '.cm-activeLineGutter': { backgroundColor: 'var(--accent)' },
+});
+
+function promptEditorExtensions(filename: string) {
+  return [
+    EditorView.lineWrapping,
+    EditorView.contentAttributes.of({ 'aria-label': `${filename} 内容`, spellcheck: 'false' }),
+    editorTheme,
+  ];
+}
 
 export function NewPromptPage() {
   return <PromptEditorPage />;
@@ -44,6 +49,9 @@ export function EditPromptPage() {
 
 function PromptEditorPage({ profileId }: { profileId?: string }) {
   const navigate = useNavigate();
+  const { activeProduct, setHasUnsavedChanges } = useAppShell();
+  const filename = instructionFilename(activeProduct);
+  const extensions = useMemo(() => promptEditorExtensions(filename), [filename]);
   const [profile, setProfile] = useState<AgentsProfile | null>(null);
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
@@ -59,10 +67,16 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
   });
 
   useEffect(() => {
+    setHasUnsavedChanges(dirty);
+    return () => setHasUnsavedChanges(false);
+  }, [dirty, setHasUnsavedChanges]);
+
+  useEffect(() => {
     if (!profileId) return;
     const currentRequest = ++requestId.current;
     setBusy(true);
-    invoke<AgentsStatus>('get_agents_status')
+    setProfile(null);
+    invoke<AgentsStatus>('get_agents_status', { product: activeProduct })
       .then((status) => {
         if (currentRequest !== requestId.current) return;
         const next = status.profiles.find((item) => item.id === profileId);
@@ -82,20 +96,25 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
     return () => {
       requestId.current += 1;
     };
-  }, [profileId]);
+  }, [activeProduct, profileId]);
 
   async function save(event?: FormEvent) {
     event?.preventDefault();
     setBusy(true);
     try {
       if (profileId) {
-        await invoke('update_agents_profile', { profileId, name, content });
+        await invoke('update_agents_profile', {
+          product: activeProduct,
+          profileId,
+          name,
+          content,
+        });
         setSavedName(name.trim());
         setName(name.trim());
         setSavedContent(content);
         toast.success('提示词已保存。');
       } else {
-        await invoke('create_agents_profile', { name, content });
+        await invoke('create_agents_profile', { product: activeProduct, name, content });
         toast.success('提示词已创建。');
         await navigate({ to: '/prompts', ignoreBlocker: true });
       }
@@ -126,6 +145,8 @@ function PromptEditorPage({ profileId }: { profileId?: string }) {
         content={content}
         busy={busy}
         dirty={dirty}
+        filename={filename}
+        extensions={extensions}
         navigationBlocked={blocker.status === 'blocked'}
         onNameChange={setName}
         onContentChange={setContent}
@@ -142,6 +163,8 @@ function PromptEditorContent({
   content,
   busy,
   dirty,
+  filename,
+  extensions,
   navigationBlocked,
   onNameChange,
   onContentChange,
@@ -153,6 +176,8 @@ function PromptEditorContent({
   content: string;
   busy: boolean;
   dirty: boolean;
+  filename: string;
+  extensions: ReturnType<typeof promptEditorExtensions>;
   navigationBlocked: boolean;
   onNameChange: (name: string) => void;
   onContentChange: (content: string) => void;
@@ -177,13 +202,13 @@ function PromptEditorContent({
             />
           </Field>
           <Field className="min-h-0 flex-1">
-            <FieldLabel>AGENTS.md</FieldLabel>
+            <FieldLabel>{filename}</FieldLabel>
             <CodeMirror
               className="min-h-0 flex-1 overflow-hidden rounded-lg border border-input focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
               height="100%"
               value={content}
               onChange={onContentChange}
-              extensions={editorExtensions}
+              extensions={extensions}
               editable={!busy}
               readOnly={busy}
               theme="none"

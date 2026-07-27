@@ -43,6 +43,7 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
             )
             .map_err(database_error)?;
     }
+    migrate_instruction_profiles(&mut connection)?;
     let has_profiles = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'profiles')",
@@ -67,10 +68,12 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
             "
             CREATE TABLE IF NOT EXISTS instruction_profiles (
               id TEXT PRIMARY KEY NOT NULL,
-              name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+              product TEXT NOT NULL,
+              name TEXT NOT NULL COLLATE NOCASE,
               content TEXT NOT NULL,
               created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
+              updated_at INTEGER NOT NULL,
+              UNIQUE(product, name)
             );
             CREATE TABLE IF NOT EXISTS accounts (
               id TEXT PRIMARY KEY NOT NULL,
@@ -175,6 +178,51 @@ pub(super) fn initialize_database(state: &AppState) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn migrate_instruction_profiles(connection: &mut Connection) -> Result<(), String> {
+    let exists = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'instruction_profiles')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(database_error)?;
+    if !exists || instruction_profile_column_exists(connection, "product")? {
+        return Ok(());
+    }
+
+    let transaction = connection.transaction().map_err(database_error)?;
+    transaction
+        .execute_batch(
+            "
+            CREATE TABLE instruction_profiles_v2 (
+              id TEXT PRIMARY KEY NOT NULL,
+              product TEXT NOT NULL,
+              name TEXT NOT NULL COLLATE NOCASE,
+              content TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              UNIQUE(product, name)
+            );
+            INSERT INTO instruction_profiles_v2 (id, product, name, content, created_at, updated_at)
+              SELECT id, 'codex', name, content, created_at, updated_at FROM instruction_profiles;
+            DROP TABLE instruction_profiles;
+            ALTER TABLE instruction_profiles_v2 RENAME TO instruction_profiles;
+            ",
+        )
+        .map_err(database_error)?;
+    transaction.commit().map_err(database_error)
+}
+
+fn instruction_profile_column_exists(connection: &Connection, name: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('instruction_profiles') WHERE name = ?1)",
+            params![name],
+            |row| row.get(0),
+        )
+        .map_err(database_error)
 }
 
 fn backfill_codex_user_ids(connection: &Connection) -> Result<(), String> {
@@ -440,13 +488,19 @@ mod tests {
         assert_eq!(
             connection
                 .query_row(
-                    "SELECT content FROM instruction_profiles WHERE id = 'default'",
+                    "SELECT product || ':' || content FROM instruction_profiles WHERE id = 'default'",
                     [],
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap(),
-            "# Rules"
+            "codex:# Rules"
         );
+        connection
+            .execute(
+                "INSERT INTO instruction_profiles (id, product, name, content, created_at, updated_at) VALUES ('claude-default', 'claude', 'Default', '# Claude', 1, 1)",
+                [],
+            )
+            .unwrap();
         drop(connection);
         fs::remove_dir_all(directory).unwrap();
     }

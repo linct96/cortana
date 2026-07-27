@@ -124,7 +124,7 @@ function ConfigContent({ product }: { product: AccountProduct }) {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const extensions = useMemo(() => configEditorExtensions(product), [product]);
   const { title, formatName, filename } = configMetadata[product];
-  const { setConfigDirty } = useAppShell();
+  const { setHasUnsavedChanges } = useAppShell();
   const dirty = content !== savedContent;
   const blocker = useBlocker({
     shouldBlockFn: useCallback(() => dirty, [dirty]),
@@ -133,9 +133,9 @@ function ConfigContent({ product }: { product: AccountProduct }) {
   });
 
   useEffect(() => {
-    setConfigDirty(dirty);
-    return () => setConfigDirty(false);
-  }, [dirty, setConfigDirty]);
+    setHasUnsavedChanges(dirty);
+    return () => setHasUnsavedChanges(false);
+  }, [dirty, setHasUnsavedChanges]);
 
   useEffect(() => {
     let ignore = false;

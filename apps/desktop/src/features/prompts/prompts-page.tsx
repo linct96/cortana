@@ -6,13 +6,14 @@ import {
   LoaderCircle,
   Pencil,
   Plus,
+  Save,
   Trash2,
   TriangleAlert,
-  Upload,
 } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { invoke } from '../../backend';
+import { type AccountProduct, useAppShell } from '../../components/app-shell-context';
 import { PageHeader, PageShell } from '../../components/page-shell';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
@@ -34,9 +35,10 @@ import {
 } from '../../components/ui/empty';
 import { appError, cn } from '../../utils';
 import { ConfirmDialog, NameDialogForm } from './prompt-dialogs';
-import type { AgentsProfile, AgentsStatus } from './types';
+import { instructionFilename, type AgentsProfile, type AgentsStatus } from './types';
 
 export default function PromptsPage() {
+  const { activeProduct } = useAppShell();
   return (
     <PageShell className="flex min-h-0 flex-col overflow-hidden">
       <PageHeader
@@ -47,12 +49,13 @@ export default function PromptsPage() {
           </Link>
         }
       />
-      <PromptsContent />
+      <PromptsContent key={activeProduct} product={activeProduct} />
     </PageShell>
   );
 }
 
-function PromptsContent() {
+function PromptsContent({ product }: { product: AccountProduct }) {
+  const filename = instructionFilename(product);
   const [status, setStatus] = useState<AgentsStatus | null>(null);
   const [busy, setBusy] = useState<string | null>('load');
   const [importing, setImporting] = useState(false);
@@ -64,13 +67,13 @@ function PromptsContent() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      setStatus(await invoke<AgentsStatus>('get_agents_status'));
+      setStatus(await invoke<AgentsStatus>('get_agents_status', { product }));
     } catch (caught) {
       const message = appError(caught);
       setError(message);
       toast.error(message);
     }
-  }, []);
+  }, [product]);
 
   useEffect(() => {
     void load().finally(() => setBusy(null));
@@ -85,7 +88,7 @@ function PromptsContent() {
     event.preventDefault();
     setBusy('import');
     try {
-      await invoke('import_current_agents', { name: importName });
+      await invoke('import_current_agents', { product, name: importName });
       setImporting(false);
       toast.success('当前文件已同步。');
       await load();
@@ -99,7 +102,7 @@ function PromptsContent() {
   async function activateProfile(profile: AgentsProfile, force = false) {
     setBusy(`activate:${profile.id}`);
     try {
-      await invoke('activate_agents_profile', { profileId: profile.id, force });
+      await invoke('activate_agents_profile', { product, profileId: profile.id, force });
       setForceProfile(null);
       toast.success(`已启用 ${profile.name}。`);
       await load();
@@ -116,7 +119,7 @@ function PromptsContent() {
     if (!deleting) return;
     setBusy(`delete:${deleting.id}`);
     try {
-      await invoke('delete_agents_profile', { profileId: deleting.id });
+      await invoke('delete_agents_profile', { product, profileId: deleting.id });
       toast.success(`已删除 ${deleting.name}。`);
       setDeleting(null);
       await load();
@@ -127,25 +130,10 @@ function PromptsContent() {
     }
   }
 
+  const hasRows = Boolean(status?.unmanagedContent || status?.profiles.length);
+
   return (
     <>
-      {status && status.fileState !== 'managed' && status.fileState !== 'missing' && (
-        <div className="shrink-0 px-4 pb-5 sm:px-8 lg:px-12">
-          <Alert className="pr-40">
-            <TriangleAlert />
-            <AlertTitle>AGENTS.md 尚未纳管</AlertTitle>
-            <AlertDescription className="truncate" title={status.path}>
-              {status.path}
-            </AlertDescription>
-            <AlertAction>
-              <Button variant="outline" size="sm" onClick={() => setImporting(true)}>
-                <Upload data-icon="inline-start" /> 同步当前文件
-              </Button>
-            </AlertAction>
-          </Alert>
-        </div>
-      )}
-
       <section className="min-h-0 flex-1 overflow-y-auto">
         {busy === 'load' ? (
           <Empty className="min-h-52 rounded-none border-y">
@@ -169,9 +157,16 @@ function PromptsContent() {
               </AlertAction>
             </Alert>
           </div>
-        ) : status?.profiles.length ? (
+        ) : hasRows ? (
           <div className="flex w-full flex-col gap-3 px-4 pt-6 pb-10 sm:px-8 lg:px-12">
-            {status.profiles.map((profile) => (
+            {status?.unmanagedContent && (
+              <UnsavedPromptRow
+                filename={filename}
+                content={status.unmanagedContent}
+                onSave={() => setImporting(true)}
+              />
+            )}
+            {status?.profiles.map((profile) => (
               <PromptRow
                 key={profile.id}
                 profile={profile}
@@ -211,7 +206,7 @@ function PromptsContent() {
         title="删除提示词"
         description={
           deleting?.isActive
-            ? '方案将从 Cortana 删除，当前 AGENTS.md 会保留为未纳管状态。'
+            ? `方案将从 Cortana 删除，当前 ${filename} 会作为未保存提示词保留。`
             : `确定删除“${deleting?.name ?? ''}”吗？`
         }
         confirmLabel="删除"
@@ -222,14 +217,47 @@ function PromptsContent() {
       />
       <ConfirmDialog
         open={Boolean(forceProfile)}
-        title="覆盖未纳管文件"
-        description="继续启用会用所选方案覆盖当前 AGENTS.md。"
-        confirmLabel="强制覆盖"
+        title="覆盖未保存提示词"
+        description={`当前未保存的 ${filename} 将被所选方案覆盖。`}
+        confirmLabel="继续切换"
         busy={Boolean(busy)}
         onClose={() => setForceProfile(null)}
         onConfirm={() => forceProfile && void activateProfile(forceProfile, true)}
       />
     </>
+  );
+}
+
+function UnsavedPromptRow({
+  filename,
+  content,
+  onSave,
+}: {
+  filename: string;
+  content: string;
+  onSave: () => void;
+}) {
+  const preview = firstContentLine(content);
+
+  return (
+    <article className="group flex h-[68px] items-center gap-3 rounded-md border border-border bg-card px-3 py-3 transition-[border-color,background-color] hover:border-primary/30">
+      <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-primary">
+        <FileText size={18} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="mb-0.5 flex items-center gap-2">
+          <strong className="truncate text-sm font-medium">{filename}</strong>
+          <Badge variant="warning">未保存</Badge>
+        </div>
+        <p className="truncate text-xs text-muted-foreground">{preview}</p>
+      </div>
+      <div className="pointer-events-none flex justify-end opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+        <Button size="icon" type="button" onClick={onSave}>
+          <Save />
+          <span className="sr-only">保存当前提示词</span>
+        </Button>
+      </div>
+    </article>
   );
 }
 
@@ -244,10 +272,7 @@ function PromptRow({
   onActivate: () => void;
   onDelete: () => void;
 }) {
-  const preview = profile.content
-    .split('\n')
-    .map((line) => line.trim())
-    .find(Boolean);
+  const preview = firstContentLine(profile.content);
 
   return (
     <article
@@ -264,7 +289,7 @@ function PromptRow({
           <strong className="truncate text-sm font-medium">{profile.name}</strong>
           {profile.isActive && <Badge>使用中</Badge>}
         </div>
-        <p className="truncate text-xs text-muted-foreground">{preview || '空白提示词'}</p>
+        <p className="truncate text-xs text-muted-foreground">{preview}</p>
       </div>
       <div className="pointer-events-none flex min-w-18 justify-end gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
         {!profile.isActive && (
@@ -293,5 +318,14 @@ function PromptRow({
         </DropdownMenu>
       </div>
     </article>
+  );
+}
+
+function firstContentLine(content: string) {
+  return (
+    content
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) || '空白提示词'
   );
 }

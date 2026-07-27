@@ -1,5 +1,7 @@
 use super::{codex::*, db::*, *};
 
+const ANTIGRAVITY_MAX_INSTRUCTION_CHARS: usize = 12_000;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AgentsProfile {
@@ -17,82 +19,116 @@ pub(super) struct AgentsStatus {
     profiles: Vec<AgentsProfile>,
     path: String,
     file_state: String,
+    unmanaged_content: Option<String>,
 }
 
-fn agents_path(state: &AppState) -> Result<PathBuf, String> {
-    Ok(auth_path(state)?.with_file_name("AGENTS.md"))
+fn instruction_path(state: &AppState, product: AccountProduct) -> Result<PathBuf, String> {
+    let user_home = state
+        .default_codex_home
+        .parent()
+        .unwrap_or(&state.default_codex_home);
+    Ok(match product {
+        AccountProduct::Codex => auth_path(state)?.with_file_name("AGENTS.md"),
+        AccountProduct::Claude => std::env::var_os("CLAUDE_CONFIG_DIR")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| user_home.join(".claude"))
+            .join("CLAUDE.md"),
+        AccountProduct::Antigravity => user_home.join(".gemini/GEMINI.md"),
+        AccountProduct::Grok => env::grok_home(state).join("AGENTS.md"),
+    })
 }
 
-fn current_agents_profile_id(
+fn instruction_filename(product: AccountProduct) -> &'static str {
+    match product {
+        AccountProduct::Claude => "CLAUDE.md",
+        AccountProduct::Antigravity => "GEMINI.md",
+        AccountProduct::Codex | AccountProduct::Grok => "AGENTS.md",
+    }
+}
+
+fn current_instruction_profile_id(
     state: &AppState,
     connection: &Connection,
+    product: AccountProduct,
 ) -> Result<Option<String>, String> {
-    let content = read_optional_file(&agents_path(state)?)?;
+    let content = read_optional_file(&instruction_path(state, product)?)?;
     content
         .as_deref()
         .filter(|content| !content.trim().is_empty())
-        .map(|content| unique_profile_id_for_content(connection, content))
+        .map(|content| unique_profile_id_for_content(connection, product, content))
         .transpose()
         .map(Option::flatten)
 }
 
 #[tauri::command]
-pub(super) fn get_agents_status(state: State<'_, AppState>) -> Result<AgentsStatus, String> {
-    get_agents_status_internal(&state)
+pub(super) fn get_agents_status(
+    state: State<'_, AppState>,
+    product: AccountProduct,
+) -> Result<AgentsStatus, String> {
+    get_agents_status_internal(&state, product)
 }
 
 #[tauri::command]
 pub(super) fn create_agents_profile(
     state: State<'_, AppState>,
+    product: AccountProduct,
     name: String,
     content: String,
 ) -> Result<AgentsProfile, String> {
-    create_agents_profile_internal(&state, &name, &content)
+    create_agents_profile_internal(&state, product, &name, &content)
 }
 
 #[tauri::command]
 pub(super) fn update_agents_profile(
     state: State<'_, AppState>,
+    product: AccountProduct,
     profile_id: String,
     name: String,
     content: String,
 ) -> Result<AgentsProfile, String> {
-    update_agents_profile_internal(&state, &profile_id, &name, &content)
+    update_agents_profile_internal(&state, product, &profile_id, &name, &content)
 }
 
 #[tauri::command]
 pub(super) fn activate_agents_profile(
     state: State<'_, AppState>,
+    product: AccountProduct,
     profile_id: String,
     force: bool,
 ) -> Result<AgentsProfile, String> {
-    activate_agents_profile_internal(&state, &profile_id, force)
+    activate_agents_profile_internal(&state, product, &profile_id, force)
 }
 
 #[tauri::command]
 pub(super) fn import_current_agents(
     state: State<'_, AppState>,
+    product: AccountProduct,
     name: String,
 ) -> Result<AgentsProfile, String> {
-    import_current_agents_internal(&state, &name)
+    import_current_agents_internal(&state, product, &name)
 }
 
 #[tauri::command]
 pub(super) fn delete_agents_profile(
     state: State<'_, AppState>,
+    product: AccountProduct,
     profile_id: String,
 ) -> Result<(), String> {
-    delete_agents_profile_internal(&state, &profile_id)
+    delete_agents_profile_internal(&state, product, &profile_id)
 }
 
-fn get_agents_status_internal(state: &AppState) -> Result<AgentsStatus, String> {
+fn get_agents_status_internal(
+    state: &AppState,
+    product: AccountProduct,
+) -> Result<AgentsStatus, String> {
     let connection = open_database(state)?;
-    let path = agents_path(state)?;
+    let path = instruction_path(state, product)?;
     let file_content = read_optional_file(&path)?;
     let active_id = file_content
         .as_deref()
         .filter(|content| !content.trim().is_empty())
-        .map(|content| unique_profile_id_for_content(&connection, content))
+        .map(|content| unique_profile_id_for_content(&connection, product, content))
         .transpose()?
         .flatten();
     let file_state = if active_id.is_some() {
@@ -107,49 +143,52 @@ fn get_agents_status_internal(state: &AppState) -> Result<AgentsStatus, String> 
     };
 
     Ok(AgentsStatus {
-        profiles: list_agents_profiles(&connection, active_id.as_deref())?,
+        profiles: list_agents_profiles(&connection, product, active_id.as_deref())?,
         path: path.display().to_string(),
         file_state: file_state.to_string(),
+        unmanaged_content: (file_state == "unmanaged").then(|| file_content.unwrap_or_default()),
     })
 }
 
 fn create_agents_profile_internal(
     state: &AppState,
+    product: AccountProduct,
     name: &str,
     content: &str,
 ) -> Result<AgentsProfile, String> {
     let connection = open_database(state)?;
-    let name = validate_name(&connection, name, None)?;
-    validate_content(&connection, content, None)?;
+    let name = validate_name(&connection, product, name, None)?;
+    validate_content(&connection, product, content, None)?;
     let id = Uuid::new_v4().to_string();
     let now = now_millis();
     connection
         .execute(
-            "INSERT INTO instruction_profiles (id, name, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![id, name, content, now],
+            "INSERT INTO instruction_profiles (id, product, name, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![id, product.as_str(), name, content, now],
         )
         .map_err(database_error)?;
-    let active_id = current_agents_profile_id(state, &connection)?;
-    get_agents_profile(&connection, &id, active_id.as_deref())
+    let active_id = current_instruction_profile_id(state, &connection, product)?;
+    get_agents_profile(&connection, product, &id, active_id.as_deref())
 }
 
 fn update_agents_profile_internal(
     state: &AppState,
+    product: AccountProduct,
     profile_id: &str,
     name: &str,
     content: &str,
 ) -> Result<AgentsProfile, String> {
     let mut connection = open_database(state)?;
-    let name = validate_name(&connection, name, Some(profile_id))?;
-    get_profile_content(&connection, profile_id)?
+    let name = validate_name(&connection, product, name, Some(profile_id))?;
+    get_profile_content(&connection, product, profile_id)?
         .ok_or_else(|| "提示词方案不存在。".to_string())?;
-    validate_content(&connection, content, Some(profile_id))?;
-    let path = agents_path(state)?;
+    validate_content(&connection, product, content, Some(profile_id))?;
+    let path = instruction_path(state, product)?;
     let backup = read_optional_file(&path)?;
     let active_id = backup
         .as_deref()
         .filter(|current| !current.trim().is_empty())
-        .map(|current| unique_profile_id_for_content(&connection, current))
+        .map(|current| unique_profile_id_for_content(&connection, product, current))
         .transpose()?
         .flatten();
     let is_active = active_id.as_deref() == Some(profile_id);
@@ -161,8 +200,8 @@ fn update_agents_profile_internal(
     let transaction = connection.transaction().map_err(database_error)?;
     let result = transaction
         .execute(
-            "UPDATE instruction_profiles SET name = ?1, content = ?2, updated_at = ?3 WHERE id = ?4",
-            params![name, content, now, profile_id],
+            "UPDATE instruction_profiles SET name = ?1, content = ?2, updated_at = ?3 WHERE id = ?4 AND product = ?5",
+            params![name, content, now, profile_id, product.as_str()],
         )
         .map_err(database_error)
         .and_then(|_| transaction.commit().map_err(database_error));
@@ -172,60 +211,81 @@ fn update_agents_profile_internal(
         }
         return Err(error);
     }
-    let active_id = current_agents_profile_id(state, &connection)?;
-    get_agents_profile(&connection, profile_id, active_id.as_deref())
+    let active_id = current_instruction_profile_id(state, &connection, product)?;
+    get_agents_profile(&connection, product, profile_id, active_id.as_deref())
 }
 
 fn activate_agents_profile_internal(
     state: &AppState,
+    product: AccountProduct,
     profile_id: &str,
     force: bool,
 ) -> Result<AgentsProfile, String> {
     let connection = open_database(state)?;
-    let content = get_profile_content(&connection, profile_id)?
+    let content = get_profile_content(&connection, product, profile_id)?
         .ok_or_else(|| "提示词方案不存在。".to_string())?;
-    validate_content(&connection, &content, Some(profile_id))?;
-    let path = agents_path(state)?;
+    validate_content(&connection, product, &content, Some(profile_id))?;
+    let path = instruction_path(state, product)?;
     let backup = read_optional_file(&path)?;
-    ensure_unmanaged_file_can_be_replaced(&connection, backup.as_deref(), &content, force)?;
+    ensure_unmanaged_file_can_be_replaced(
+        &connection,
+        product,
+        backup.as_deref(),
+        &content,
+        force,
+    )?;
     write_file_atomically(&path, &content)?;
-    get_agents_profile(&connection, profile_id, Some(profile_id))
+    get_agents_profile(&connection, product, profile_id, Some(profile_id))
 }
 
-fn import_current_agents_internal(state: &AppState, name: &str) -> Result<AgentsProfile, String> {
-    let path = agents_path(state)?;
+fn import_current_agents_internal(
+    state: &AppState,
+    product: AccountProduct,
+    name: &str,
+) -> Result<AgentsProfile, String> {
+    let path = instruction_path(state, product)?;
     let content = read_optional_file(&path)?
         .filter(|content| !content.trim().is_empty())
-        .ok_or_else(|| "当前 AGENTS.md 为空，无法同步。".to_string())?;
+        .ok_or_else(|| format!("当前 {} 为空，无法同步。", instruction_filename(product)))?;
     let mut connection = open_database(state)?;
-    let matching_ids = profile_ids_for_content(&connection, &content)?;
+    validate_content_length(product, &content)?;
+    let matching_ids = profile_ids_for_content(&connection, product, &content)?;
     if matching_ids.len() == 1 {
-        return get_agents_profile(&connection, &matching_ids[0], Some(&matching_ids[0]));
+        return get_agents_profile(
+            &connection,
+            product,
+            &matching_ids[0],
+            Some(&matching_ids[0]),
+        );
     }
     if matching_ids.len() > 1 {
         return Err("存在多个内容相同的提示词方案，请先处理重复内容。".to_string());
     }
-    let name = validate_name(&connection, name, None)?;
-    validate_content(&connection, &content, None)?;
+    let name = validate_name(&connection, product, name, None)?;
+    validate_content(&connection, product, &content, None)?;
     let id = Uuid::new_v4().to_string();
     let now = now_millis();
     let transaction = connection.transaction().map_err(database_error)?;
     transaction
         .execute(
-            "INSERT INTO instruction_profiles (id, name, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![id, name, content, now],
+            "INSERT INTO instruction_profiles (id, product, name, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![id, product.as_str(), name, content, now],
         )
         .map_err(database_error)?;
     transaction.commit().map_err(database_error)?;
-    get_agents_profile(&connection, &id, Some(&id))
+    get_agents_profile(&connection, product, &id, Some(&id))
 }
 
-fn delete_agents_profile_internal(state: &AppState, profile_id: &str) -> Result<(), String> {
+fn delete_agents_profile_internal(
+    state: &AppState,
+    product: AccountProduct,
+    profile_id: &str,
+) -> Result<(), String> {
     let connection = open_database(state)?;
     let changed = connection
         .execute(
-            "DELETE FROM instruction_profiles WHERE id = ?1",
-            params![profile_id],
+            "DELETE FROM instruction_profiles WHERE id = ?1 AND product = ?2",
+            params![profile_id, product.as_str()],
         )
         .map_err(database_error)?;
     if changed == 0 {
@@ -236,31 +296,37 @@ fn delete_agents_profile_internal(state: &AppState, profile_id: &str) -> Result<
 
 fn ensure_unmanaged_file_can_be_replaced(
     connection: &Connection,
+    product: AccountProduct,
     current: Option<&str>,
     next: &str,
     force: bool,
 ) -> Result<(), String> {
     let current = current.unwrap_or_default();
-    let managed =
-        !current.trim().is_empty() && unique_profile_id_for_content(connection, current)?.is_some();
+    let managed = !current.trim().is_empty()
+        && unique_profile_id_for_content(connection, product, current)?.is_some();
     if !force && !current.trim().is_empty() && !managed && current != next {
-        return Err("检测到未纳管的 AGENTS.md。请先同步当前文件，或确认后强制覆盖。".to_string());
+        return Err(format!(
+            "检测到未纳管的 {}。请先同步当前文件，或确认后强制覆盖。",
+            instruction_filename(product)
+        ));
     }
     Ok(())
 }
 
 fn validate_content(
     connection: &Connection,
+    product: AccountProduct,
     content: &str,
     excluded_id: Option<&str>,
 ) -> Result<(), String> {
     if content.trim().is_empty() {
         return Err("提示词内容不能为空。".to_string());
     }
+    validate_content_length(product, content)?;
     let duplicate = connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM instruction_profiles WHERE content = ?1 AND (?2 IS NULL OR id <> ?2))",
-            params![content, excluded_id],
+            "SELECT EXISTS(SELECT 1 FROM instruction_profiles WHERE product = ?1 AND content = ?2 AND (?3 IS NULL OR id <> ?3))",
+            params![product.as_str(), content, excluded_id],
             |row| row.get::<_, bool>(0),
         )
         .map_err(database_error)?;
@@ -270,14 +336,29 @@ fn validate_content(
     Ok(())
 }
 
-fn profile_ids_for_content(connection: &Connection, content: &str) -> Result<Vec<String>, String> {
+fn validate_content_length(product: AccountProduct, content: &str) -> Result<(), String> {
+    if product == AccountProduct::Antigravity
+        && content.chars().count() > ANTIGRAVITY_MAX_INSTRUCTION_CHARS
+    {
+        return Err(format!(
+            "Antigravity 提示词不能超过 {ANTIGRAVITY_MAX_INSTRUCTION_CHARS} 个字符。"
+        ));
+    }
+    Ok(())
+}
+
+fn profile_ids_for_content(
+    connection: &Connection,
+    product: AccountProduct,
+    content: &str,
+) -> Result<Vec<String>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id FROM instruction_profiles WHERE content = ?1 ORDER BY created_at ASC LIMIT 2",
+            "SELECT id FROM instruction_profiles WHERE product = ?1 AND content = ?2 ORDER BY created_at ASC LIMIT 2",
         )
         .map_err(database_error)?;
     let profiles = statement
-        .query_map(params![content], |row| row.get(0))
+        .query_map(params![product.as_str(), content], |row| row.get(0))
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
@@ -286,14 +367,16 @@ fn profile_ids_for_content(connection: &Connection, content: &str) -> Result<Vec
 
 fn unique_profile_id_for_content(
     connection: &Connection,
+    product: AccountProduct,
     content: &str,
 ) -> Result<Option<String>, String> {
-    let ids = profile_ids_for_content(connection, content)?;
+    let ids = profile_ids_for_content(connection, product, content)?;
     Ok((ids.len() == 1).then(|| ids[0].clone()))
 }
 
 fn validate_name(
     connection: &Connection,
+    product: AccountProduct,
     name: &str,
     excluded_id: Option<&str>,
 ) -> Result<String, String> {
@@ -303,8 +386,8 @@ fn validate_name(
     }
     let exists = connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM instruction_profiles WHERE name = ?1 COLLATE NOCASE AND (?2 IS NULL OR id <> ?2))",
-            params![name, excluded_id],
+            "SELECT EXISTS(SELECT 1 FROM instruction_profiles WHERE product = ?1 AND name = ?2 COLLATE NOCASE AND (?3 IS NULL OR id <> ?3))",
+            params![product.as_str(), name, excluded_id],
             |row| row.get::<_, bool>(0),
         )
         .map_err(database_error)?;
@@ -314,11 +397,15 @@ fn validate_name(
     Ok(name.to_string())
 }
 
-fn get_profile_content(connection: &Connection, id: &str) -> Result<Option<String>, String> {
+fn get_profile_content(
+    connection: &Connection,
+    product: AccountProduct,
+    id: &str,
+) -> Result<Option<String>, String> {
     connection
         .query_row(
-            "SELECT content FROM instruction_profiles WHERE id = ?1",
-            params![id],
+            "SELECT content FROM instruction_profiles WHERE id = ?1 AND product = ?2",
+            params![id, product.as_str()],
             |row| row.get(0),
         )
         .optional()
@@ -327,13 +414,16 @@ fn get_profile_content(connection: &Connection, id: &str) -> Result<Option<Strin
 
 fn list_agents_profiles(
     connection: &Connection,
+    product: AccountProduct,
     active_id: Option<&str>,
 ) -> Result<Vec<AgentsProfile>, String> {
     let mut statement = connection
-        .prepare("SELECT id, name, content, created_at, updated_at FROM instruction_profiles ORDER BY created_at ASC")
+        .prepare("SELECT id, name, content, created_at, updated_at FROM instruction_profiles WHERE product = ?1 ORDER BY created_at ASC")
         .map_err(database_error)?;
     let profiles = statement
-        .query_map([], |row| agents_profile_from_row(row, active_id))
+        .query_map(params![product.as_str()], |row| {
+            agents_profile_from_row(row, active_id)
+        })
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
@@ -342,13 +432,14 @@ fn list_agents_profiles(
 
 fn get_agents_profile(
     connection: &Connection,
+    product: AccountProduct,
     id: &str,
     active_id: Option<&str>,
 ) -> Result<AgentsProfile, String> {
     connection
         .query_row(
-            "SELECT id, name, content, created_at, updated_at FROM instruction_profiles WHERE id = ?1",
-            params![id],
+            "SELECT id, name, content, created_at, updated_at FROM instruction_profiles WHERE id = ?1 AND product = ?2",
+            params![id, product.as_str()],
             |row| agents_profile_from_row(row, active_id),
         )
         .optional()
@@ -375,6 +466,8 @@ fn agents_profile_from_row(
 mod tests {
     use super::*;
 
+    const CODEX: AccountProduct = AccountProduct::Codex;
+
     fn test_state() -> (PathBuf, AppState) {
         let directory =
             std::env::temp_dir().join(format!("cortana-agents-test-{}", Uuid::new_v4()));
@@ -388,21 +481,30 @@ mod tests {
         (directory, state)
     }
 
+    fn create(state: &AppState, name: &str, content: &str) -> AgentsProfile {
+        create_agents_profile_internal(state, CODEX, name, content).unwrap()
+    }
+
+    fn codex_path(state: &AppState) -> PathBuf {
+        instruction_path(state, CODEX).unwrap()
+    }
+
     #[test]
     fn creates_inactive_then_activates_exact_content() {
         let (directory, state) = test_state();
-        let profile = create_agents_profile_internal(&state, "Default", "# Rules\n").unwrap();
-        assert!(!agents_path(&state).unwrap().exists());
-        update_agents_profile_internal(&state, &profile.id, "Default", "# Updated\n").unwrap();
-        assert!(!agents_path(&state).unwrap().exists());
+        let profile = create(&state, "Default", "# Rules\n");
+        assert!(!codex_path(&state).exists());
+        update_agents_profile_internal(&state, CODEX, &profile.id, "Default", "# Updated\n")
+            .unwrap();
+        assert!(!codex_path(&state).exists());
 
-        activate_agents_profile_internal(&state, &profile.id, false).unwrap();
+        activate_agents_profile_internal(&state, CODEX, &profile.id, false).unwrap();
 
         assert_eq!(
-            fs::read_to_string(agents_path(&state).unwrap()).unwrap(),
+            fs::read_to_string(codex_path(&state)).unwrap(),
             "# Updated\n"
         );
-        let status = get_agents_status_internal(&state).unwrap();
+        let status = get_agents_status_internal(&state, CODEX).unwrap();
         assert_eq!(status.file_state, "managed");
         assert!(
             status
@@ -422,41 +524,52 @@ mod tests {
     #[test]
     fn protects_and_can_import_external_content() {
         let (directory, state) = test_state();
-        let first = create_agents_profile_internal(&state, "First", "first").unwrap();
-        let second = create_agents_profile_internal(&state, "Second", "second").unwrap();
-        activate_agents_profile_internal(&state, &first.id, false).unwrap();
-        write_file_atomically(&agents_path(&state).unwrap(), "external").unwrap();
+        let first = create(&state, "First", "first");
+        let second = create(&state, "Second", "second");
+        activate_agents_profile_internal(&state, CODEX, &first.id, false).unwrap();
+        write_file_atomically(&codex_path(&state), "external").unwrap();
 
-        assert!(activate_agents_profile_internal(&state, &second.id, false)
-            .unwrap_err()
-            .contains("未纳管"));
-        let imported = import_current_agents_internal(&state, "Imported").unwrap();
+        assert!(
+            activate_agents_profile_internal(&state, CODEX, &second.id, false)
+                .unwrap_err()
+                .contains("未纳管")
+        );
+        let imported = import_current_agents_internal(&state, CODEX, "Imported").unwrap();
         assert_eq!(imported.content, "external");
         assert!(imported.is_active);
-        write_file_atomically(&agents_path(&state).unwrap(), "external-again").unwrap();
-        activate_agents_profile_internal(&state, &second.id, true).unwrap();
-        assert_eq!(
-            fs::read_to_string(agents_path(&state).unwrap()).unwrap(),
-            "second"
-        );
+        write_file_atomically(&codex_path(&state), "external-again").unwrap();
+        activate_agents_profile_internal(&state, CODEX, &second.id, true).unwrap();
+        assert_eq!(fs::read_to_string(codex_path(&state)).unwrap(), "second");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn exposes_an_existing_unsaved_file_without_saved_profiles() {
+        let (directory, state) = test_state();
+        write_file_atomically(&codex_path(&state), "# Existing\n").unwrap();
+
+        let status = get_agents_status_internal(&state, CODEX).unwrap();
+
+        assert!(status.profiles.is_empty());
+        assert_eq!(status.file_state, "unmanaged");
+        assert_eq!(status.unmanaged_content.as_deref(), Some("# Existing\n"));
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn updates_active_file_and_leaves_it_when_deleted() {
         let (directory, state) = test_state();
-        let profile = create_agents_profile_internal(&state, "Default", "old").unwrap();
-        activate_agents_profile_internal(&state, &profile.id, false).unwrap();
+        let profile = create(&state, "Default", "old");
+        activate_agents_profile_internal(&state, CODEX, &profile.id, false).unwrap();
 
-        update_agents_profile_internal(&state, &profile.id, "Renamed", "new").unwrap();
-        delete_agents_profile_internal(&state, &profile.id).unwrap();
+        update_agents_profile_internal(&state, CODEX, &profile.id, "Renamed", "new").unwrap();
+        delete_agents_profile_internal(&state, CODEX, &profile.id).unwrap();
 
+        assert_eq!(fs::read_to_string(codex_path(&state)).unwrap(), "new");
         assert_eq!(
-            fs::read_to_string(agents_path(&state).unwrap()).unwrap(),
-            "new"
-        );
-        assert_eq!(
-            get_agents_status_internal(&state).unwrap().file_state,
+            get_agents_status_internal(&state, CODEX)
+                .unwrap()
+                .file_state,
             "unmanaged"
         );
         fs::remove_dir_all(directory).unwrap();
@@ -465,13 +578,13 @@ mod tests {
     #[test]
     fn follows_external_switch_to_an_existing_profile() {
         let (directory, state) = test_state();
-        let first = create_agents_profile_internal(&state, "First", "first").unwrap();
-        let second = create_agents_profile_internal(&state, "Second", "second").unwrap();
-        activate_agents_profile_internal(&state, &first.id, false).unwrap();
+        let first = create(&state, "First", "first");
+        let second = create(&state, "Second", "second");
+        activate_agents_profile_internal(&state, CODEX, &first.id, false).unwrap();
 
-        write_file_atomically(&agents_path(&state).unwrap(), "second").unwrap();
+        write_file_atomically(&codex_path(&state), "second").unwrap();
 
-        let status = get_agents_status_internal(&state).unwrap();
+        let status = get_agents_status_internal(&state, CODEX).unwrap();
         assert_eq!(status.file_state, "managed");
         assert!(
             !status
@@ -489,9 +602,11 @@ mod tests {
                 .unwrap()
                 .is_active
         );
-        write_file_atomically(&agents_path(&state).unwrap(), "second\n").unwrap();
+        write_file_atomically(&codex_path(&state), "second\n").unwrap();
         assert_eq!(
-            get_agents_status_internal(&state).unwrap().file_state,
+            get_agents_status_internal(&state, CODEX)
+                .unwrap()
+                .file_state,
             "unmanaged"
         );
         fs::remove_dir_all(directory).unwrap();
@@ -500,11 +615,75 @@ mod tests {
     #[test]
     fn rejects_empty_and_duplicate_content() {
         let (directory, state) = test_state();
-        assert!(create_agents_profile_internal(&state, "Empty", " \n").is_err());
-        create_agents_profile_internal(&state, "First", "same").unwrap();
-        assert!(create_agents_profile_internal(&state, "Duplicate", "same").is_err());
-        let second = create_agents_profile_internal(&state, "Second", "other").unwrap();
-        assert!(update_agents_profile_internal(&state, &second.id, "Second", "same").is_err());
+        assert!(create_agents_profile_internal(&state, CODEX, "Empty", " \n").is_err());
+        create(&state, "First", "same");
+        assert!(create_agents_profile_internal(&state, CODEX, "Duplicate", "same").is_err());
+        let second = create(&state, "Second", "other");
+        assert!(
+            update_agents_profile_internal(&state, CODEX, &second.id, "Second", "same").is_err()
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn isolates_profiles_and_files_by_product() {
+        let (directory, state) = test_state();
+        let codex = create_agents_profile_internal(&state, CODEX, "Default", "same").unwrap();
+        let antigravity =
+            create_agents_profile_internal(&state, AccountProduct::Antigravity, "Default", "same")
+                .unwrap();
+
+        activate_agents_profile_internal(&state, CODEX, &codex.id, false).unwrap();
+        activate_agents_profile_internal(
+            &state,
+            AccountProduct::Antigravity,
+            &antigravity.id,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            get_agents_status_internal(&state, CODEX)
+                .unwrap()
+                .profiles
+                .len(),
+            1
+        );
+        assert_eq!(
+            get_agents_status_internal(&state, AccountProduct::Antigravity)
+                .unwrap()
+                .profiles
+                .len(),
+            1
+        );
+        assert_eq!(fs::read_to_string(codex_path(&state)).unwrap(), "same");
+        assert_eq!(
+            fs::read_to_string(instruction_path(&state, AccountProduct::Antigravity).unwrap())
+                .unwrap(),
+            "same"
+        );
+        assert!(delete_agents_profile_internal(&state, AccountProduct::Grok, &codex.id).is_err());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn resolves_native_paths_and_limits_antigravity_content() {
+        let (directory, state) = test_state();
+        assert_eq!(
+            instruction_path(&state, AccountProduct::Antigravity).unwrap(),
+            directory.join(".gemini/GEMINI.md")
+        );
+        assert_eq!(instruction_filename(AccountProduct::Claude), "CLAUDE.md");
+        assert!(validate_content_length(
+            AccountProduct::Antigravity,
+            &"中".repeat(ANTIGRAVITY_MAX_INSTRUCTION_CHARS)
+        )
+        .is_ok());
+        assert!(validate_content_length(
+            AccountProduct::Antigravity,
+            &"中".repeat(ANTIGRAVITY_MAX_INSTRUCTION_CHARS + 1)
+        )
+        .is_err());
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -514,20 +693,22 @@ mod tests {
         let connection = open_database(&state).unwrap();
         connection
             .execute_batch(
-                "INSERT INTO instruction_profiles VALUES ('first', 'First', 'same', 1, 1);
-                 INSERT INTO instruction_profiles VALUES ('second', 'Second', 'same', 2, 2);",
+                "INSERT INTO instruction_profiles VALUES ('first', 'codex', 'First', 'same', 1, 1);
+                 INSERT INTO instruction_profiles VALUES ('second', 'codex', 'Second', 'same', 2, 2);",
             )
             .unwrap();
         drop(connection);
-        write_file_atomically(&agents_path(&state).unwrap(), "same").unwrap();
+        write_file_atomically(&codex_path(&state), "same").unwrap();
 
-        let status = get_agents_status_internal(&state).unwrap();
+        let status = get_agents_status_internal(&state, CODEX).unwrap();
         assert_eq!(status.file_state, "unmanaged");
         assert!(status.profiles.iter().all(|profile| !profile.is_active));
-        assert!(activate_agents_profile_internal(&state, "first", false)
-            .unwrap_err()
-            .contains("内容相同"));
-        assert!(import_current_agents_internal(&state, "Imported")
+        assert!(
+            activate_agents_profile_internal(&state, CODEX, "first", false)
+                .unwrap_err()
+                .contains("内容相同")
+        );
+        assert!(import_current_agents_internal(&state, CODEX, "Imported")
             .unwrap_err()
             .contains("内容相同"));
         fs::remove_dir_all(directory).unwrap();
