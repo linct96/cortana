@@ -58,17 +58,35 @@ pub(super) fn start_oauth_add(
     alias: Option<String>,
     activate: bool,
     product: Option<AccountProduct>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let product = product.unwrap_or_default();
     if product == AccountProduct::Grok {
-        return grok_oauth::start_device_oauth_add(app, state, alias, activate);
+        grok_oauth::start_device_oauth_add(app, state, alias, activate)?;
+        return Ok(None);
     }
     let mut pending = state
         .pending_oauth
         .lock()
         .map_err(|_| "OAuth 状态锁不可用。".to_string())?;
-    if pending.is_some() {
-        return Err("已有一个授权流程正在进行，请先在浏览器中完成或关闭它。".to_string());
+    if let Some(current) = pending.as_mut() {
+        if current.product != product {
+            return Err("已有另一个产品的授权流程正在进行，请先取消。".to_string());
+        }
+        if current.exchanging {
+            return Err("正在处理 OAuth 回调，请稍候。".to_string());
+        }
+        current.alias = alias.unwrap_or_default().trim().to_string();
+        current.activate = activate;
+        current.code_verifier = random_urlsafe(32);
+        current.state = random_urlsafe(32);
+        let auth_url = build_authorize_url(
+            product,
+            &current.code_verifier,
+            &current.state,
+            &current.callback_url,
+        )?;
+        emit_progress(&app, "waiting", "新的授权链接已生成，旧链接已失效。", None);
+        return Ok(Some(auth_url));
     }
 
     let (listeners, callback_url) = bind_oauth_listeners(product)?;
@@ -82,25 +100,79 @@ pub(super) fn start_oauth_add(
         code_verifier,
         state: state_token,
         callback_url,
+        exchanging: false,
     });
     drop(pending);
 
     emit_progress(
         &app,
-        "browser_opening",
-        &format!("正在打开浏览器进行 {} 授权。", product.display_name()),
+        "waiting",
+        &format!("{} 授权链接已生成。", product.display_name()),
         None,
     );
-    if let Err(error) = app.opener().open_url(auth_url, None::<&str>) {
-        clear_pending_oauth(&state);
-        let message = format!("无法打开默认浏览器：{error}");
-        emit_progress(&app, "error", &message, None);
-        return Err(message);
-    }
 
     let state_for_thread = state.inner().clone();
     thread::spawn(move || wait_for_oauth_callback(app, state_for_thread, listeners));
+    Ok(Some(auth_url))
+}
+
+#[tauri::command]
+pub(super) fn open_oauth_add(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    authorization_url: String,
+) -> Result<(), String> {
+    let pending = state
+        .pending_oauth
+        .lock()
+        .map_err(|_| "OAuth 状态锁不可用。".to_string())?;
+    let current = pending
+        .as_ref()
+        .ok_or_else(|| "OAuth 授权状态不存在或已过期。".to_string())?;
+    let expected = build_authorize_url(
+        current.product,
+        &current.code_verifier,
+        &current.state,
+        &current.callback_url,
+    )?;
+    if authorization_url != expected {
+        return Err("授权链接已失效，请重新生成。".to_string());
+    }
+    app.opener()
+        .open_url(authorization_url, None::<&str>)
+        .map_err(|error| format!("无法打开默认浏览器：{error}"))
+}
+
+pub(super) fn update_oauth_alias(state: State<'_, AppState>, alias: String) -> Result<(), String> {
+    let mut pending = state
+        .pending_oauth
+        .lock()
+        .map_err(|_| "OAuth 状态锁不可用。".to_string())?;
+    let current = pending
+        .as_mut()
+        .ok_or_else(|| "OAuth 授权状态不存在或已过期。".to_string())?;
+    current.alias = alias.trim().to_string();
     Ok(())
+}
+
+#[tauri::command]
+pub(super) async fn complete_oauth_add(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    callback_url: String,
+) -> Result<ProfileSummary, String> {
+    let state = state.inner().clone();
+    let app_for_task = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        complete_oauth_callback(&app_for_task, &state, callback_url)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    match &result {
+        Ok(profile) => emit_progress(&app, "success", "账户已添加。", Some(profile.clone())),
+        Err(message) => emit_progress(&app, "error", message, None),
+    }
+    result
 }
 
 #[tauri::command]
@@ -297,7 +369,6 @@ pub(super) fn wait_for_oauth_callback(
                             emit_progress(&app, "success", "账户已添加。", Some(profile));
                         }
                         Err(message) => {
-                            clear_pending_oauth(&state);
                             let _ = write_browser_response(
                                 &mut stream,
                                 pending_context
@@ -306,6 +377,14 @@ pub(super) fn wait_for_oauth_callback(
                                 false,
                                 "授权未完成，可以回到应用重试。 ",
                             );
+                            let pending = state
+                                .pending_oauth
+                                .lock()
+                                .map(|pending| pending.is_some())
+                                .unwrap_or(false);
+                            if pending {
+                                continue;
+                            }
                             if message != "OAuth 授权已取消。" {
                                 emit_progress(&app, "error", &message, None);
                             }
@@ -364,12 +443,6 @@ pub(super) fn complete_oauth_callback(
     state: &AppState,
     callback_url: String,
 ) -> Result<ProfileSummary, String> {
-    let callback = Url::parse(&callback_url).map_err(|_| "OAuth 回调地址无效。".to_string())?;
-    let received_state = callback
-        .query_pairs()
-        .find(|(key, _)| key == "state")
-        .map(|(_, value)| value.into_owned())
-        .ok_or_else(|| "OAuth 回调缺少 state。".to_string())?;
     let pending_guard = state
         .pending_oauth
         .lock()
@@ -377,18 +450,10 @@ pub(super) fn complete_oauth_callback(
     let pending_callback = pending_guard
         .as_ref()
         .ok_or_else(|| "OAuth 授权状态不存在或已过期。".to_string())?;
-    let expected_callback = Url::parse(&pending_callback.callback_url)
-        .map_err(|_| "OAuth 回调地址无效。".to_string())?;
-    if callback.host_str() != expected_callback.host_str()
-        || callback.port_or_known_default() != expected_callback.port_or_known_default()
-        || callback.path() != expected_callback.path()
-    {
-        return Err("OAuth 回调地址不受信任。".to_string());
+    if pending_callback.exchanging {
+        return Err("正在处理 OAuth 回调，请稍候。".to_string());
     }
-    let matches_pending_state = pending_callback.state == received_state;
-    if !matches_pending_state {
-        return Err("OAuth state 不匹配，已拒绝本次回调。".to_string());
-    }
+    let callback = validate_callback_url(&callback_url, pending_callback)?;
     let error = callback
         .query_pairs()
         .find(|(key, _)| key == "error")
@@ -408,22 +473,39 @@ pub(super) fn complete_oauth_callback(
         .cloned()
         .ok_or_else(|| "OAuth 授权状态不存在或已过期。".to_string())?;
     drop(pending_guard);
+    let mut pending_guard = state
+        .pending_oauth
+        .lock()
+        .map_err(|_| "OAuth 状态锁不可用。".to_string())?;
+    let current = pending_guard
+        .as_mut()
+        .filter(|current| current.state == pending.state)
+        .ok_or_else(|| "OAuth 授权状态不存在或已过期。".to_string())?;
+    if current.exchanging {
+        return Err("正在处理 OAuth 回调，请稍候。".to_string());
+    }
+    current.exchanging = true;
+    drop(pending_guard);
     emit_progress(app, "exchanging", "正在交换授权信息。", None);
     let exchange = match pending.product {
-        AccountProduct::Claude => OAuthExchange::Claude(claude::exchange_code(
-            &code,
-            &pending.state,
-            &pending.code_verifier,
-            &pending.callback_url,
-        )?),
-        AccountProduct::Codex | AccountProduct::Antigravity => {
-            OAuthExchange::Standard(exchange_code(
+        AccountProduct::Claude => OAuthExchange::Claude(
+            claude::exchange_code(
+                &code,
+                &pending.state,
+                &pending.code_verifier,
+                &pending.callback_url,
+            )
+            .inspect_err(|_| clear_pending_oauth(state))?,
+        ),
+        AccountProduct::Codex | AccountProduct::Antigravity => OAuthExchange::Standard(
+            exchange_code(
                 pending.product,
                 &code,
                 &pending.code_verifier,
                 &pending.callback_url,
-            )?)
-        }
+            )
+            .inspect_err(|_| clear_pending_oauth(state))?,
+        ),
         AccountProduct::Grok => return Err("Grok 使用 Device Code 授权。".to_string()),
     };
     let mut pending_guard = state
@@ -461,6 +543,28 @@ pub(super) fn complete_oauth_callback(
     };
     refresh_tray(app)?;
     Ok(profile)
+}
+
+fn validate_callback_url(callback_url: &str, pending: &PendingOAuth) -> Result<Url, String> {
+    let callback = Url::parse(callback_url).map_err(|_| "OAuth 回调地址无效。".to_string())?;
+    let expected =
+        Url::parse(&pending.callback_url).map_err(|_| "OAuth 回调地址无效。".to_string())?;
+    if callback.scheme() != expected.scheme()
+        || callback.host_str() != expected.host_str()
+        || callback.port_or_known_default() != expected.port_or_known_default()
+        || callback.path() != expected.path()
+    {
+        return Err("OAuth 回调地址不受信任。".to_string());
+    }
+    let received_state = callback
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .map(|(_, value)| value.into_owned())
+        .ok_or_else(|| "OAuth 回调缺少 state。".to_string())?;
+    if pending.state != received_state {
+        return Err("OAuth state 不匹配，已拒绝本次回调。".to_string());
+    }
+    Ok(callback)
 }
 
 pub(super) fn refresh_oauth_token(refresh_token: &str) -> Result<OAuthTokenResponse, String> {
@@ -825,6 +929,37 @@ mod tests {
         assert_eq!(query.get("code"), Some(&"true".into()));
         assert_eq!(query.get("state"), Some(&"state-value".into()));
         assert_eq!(query.get("code_challenge_method"), Some(&"S256".into()));
+    }
+
+    #[test]
+    fn manual_callback_requires_the_pending_target_and_state() {
+        let pending = PendingOAuth {
+            product: AccountProduct::Codex,
+            alias: String::new(),
+            activate: false,
+            code_verifier: "verifier".to_string(),
+            state: "expected-state".to_string(),
+            callback_url: OAUTH_CALLBACK_URL.to_string(),
+            exchanging: false,
+        };
+
+        assert!(validate_callback_url(
+            "http://localhost:1455/auth/callback?code=code&state=expected-state",
+            &pending,
+        )
+        .is_ok());
+        assert!(validate_callback_url(
+            "http://localhost:1455/auth/callback?code=code&state=old-state",
+            &pending,
+        )
+        .unwrap_err()
+        .contains("state 不匹配"));
+        assert!(validate_callback_url(
+            "http://example.com:1455/auth/callback?code=code&state=expected-state",
+            &pending,
+        )
+        .unwrap_err()
+        .contains("不受信任"));
     }
 
     #[test]

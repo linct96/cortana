@@ -1,6 +1,8 @@
-import { Eye, EyeOff, LoaderCircle } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, LoaderCircle } from 'lucide-react';
 import type { FormEvent, ReactNode } from 'react';
 import { productName } from '../../components/app-shell-context';
+import { CopyButton } from '../../components/copy-button';
+import { RefreshButton } from '../../components/refresh-button';
 import { Button } from '../../components/ui/button';
 import {
   Dialog,
@@ -20,6 +22,7 @@ import {
 } from '../../components/ui/input-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import type { AccountProduct, AddMode, PendingConfirm, Profile } from './types';
 
 type Setter<T> = (value: T | ((current: T) => T)) => void;
@@ -34,12 +37,17 @@ export function AddAccountDialog({
   relayApiBaseUrl,
   showRelayApiKey,
   oauthMessage,
+  oauthUrl,
+  callbackUrl,
   setAddMode,
   setAlias,
   setAuthJson,
   setRelayApiKey,
   setRelayApiBaseUrl,
   setShowRelayApiKey,
+  setCallbackUrl,
+  onGenerateOAuth,
+  onOpenOAuth,
   onSubmit,
   onClose,
 }: {
@@ -52,17 +60,23 @@ export function AddAccountDialog({
   relayApiBaseUrl: string;
   showRelayApiKey: boolean;
   oauthMessage: string | null;
+  oauthUrl: string;
+  callbackUrl: string;
   setAddMode: Setter<AddMode>;
-  setAlias: Setter<string>;
+  setAlias: (value: string) => void;
   setAuthJson: Setter<string>;
   setRelayApiKey: Setter<string>;
   setRelayApiBaseUrl: Setter<string>;
   setShowRelayApiKey: Setter<boolean>;
+  setCallbackUrl: Setter<string>;
+  onGenerateOAuth: () => Promise<void>;
+  onOpenOAuth: () => void;
   onSubmit: (event: FormEvent) => void;
   onClose: () => void;
 }) {
-  const saving = busy === 'oauth' || busy === 'auth-json' || busy === 'relay' || busy === 'import';
-  if (product !== 'codex' && product !== 'claude') {
+  const oauthSaving = busy === 'oauth' || busy?.startsWith('oauth:');
+  const saving = oauthSaving || busy === 'auth-json' || busy === 'relay' || busy === 'import';
+  if (product === 'grok') {
     return (
       <AppDialog title="添加账号" onClose={onClose}>
         <form className="flex flex-col gap-4" onSubmit={onSubmit}>
@@ -88,6 +102,43 @@ export function AddAccountDialog({
             <Button type="submit" disabled={saving}>
               {saving && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
               在浏览器中授权
+            </Button>
+          </DialogFooter>
+        </form>
+      </AppDialog>
+    );
+  }
+  if (product === 'antigravity') {
+    return (
+      <AppDialog title="添加账号" contentClassName="sm:max-w-xl" onClose={onClose}>
+        <form className="flex flex-col gap-4" onSubmit={onSubmit}>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="new-alias">别名</FieldLabel>
+              <Input
+                id="new-alias"
+                value={alias}
+                onChange={(event) => setAlias(event.target.value)}
+                placeholder="例如：工作账户"
+              />
+            </Field>
+            <BrowserOAuthFields
+              busy={busy}
+              oauthMessage={oauthMessage}
+              oauthUrl={oauthUrl}
+              callbackUrl={callbackUrl}
+              setCallbackUrl={setCallbackUrl}
+              onGenerate={onGenerateOAuth}
+              onOpen={onOpenOAuth}
+            />
+          </FieldGroup>
+          <DialogFooter>
+            <CancelButton />
+            <Button type="submit" disabled={saving || !callbackUrl.trim()}>
+              {busy === 'oauth:complete' && (
+                <LoaderCircle data-icon="inline-start" className="animate-spin" />
+              )}
+              确认
             </Button>
           </DialogFooter>
         </form>
@@ -178,24 +229,147 @@ export function AddAccountDialog({
               </Field>
             </TabsContent>
             <TabsContent value="browser" className="empty:hidden">
-              {oauthMessage && (
-                <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                  {busy === 'oauth' && <LoaderCircle size={15} className="animate-spin" />}{' '}
-                  {oauthMessage}
-                </p>
-              )}
+              <BrowserOAuthFields
+                busy={busy}
+                oauthMessage={oauthMessage}
+                oauthUrl={oauthUrl}
+                callbackUrl={callbackUrl}
+                setCallbackUrl={setCallbackUrl}
+                onGenerate={onGenerateOAuth}
+                onOpen={onOpenOAuth}
+              />
             </TabsContent>
           </FieldGroup>
           <DialogFooter>
             <CancelButton disabled={busy === 'auth-json' || busy === 'relay'} />
-            <Button type="submit" disabled={saving}>
+            <Button
+              type="submit"
+              disabled={saving || (addMode === 'browser' && !callbackUrl.trim())}
+            >
               {saving && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
-              {addMode === 'browser' ? '在浏览器中授权' : '确认'}
+              确认
             </Button>
           </DialogFooter>
         </Tabs>
       </form>
     </AppDialog>
+  );
+}
+
+function BrowserOAuthFields({
+  busy,
+  oauthMessage,
+  oauthUrl,
+  callbackUrl,
+  setCallbackUrl,
+  onGenerate,
+  onOpen,
+}: {
+  busy: string | null;
+  oauthMessage: string | null;
+  oauthUrl: string;
+  callbackUrl: string;
+  setCallbackUrl: Setter<string>;
+  onGenerate: () => Promise<void>;
+  onOpen: () => void;
+}) {
+  const loading = busy === 'oauth:prepare';
+  const completing = busy === 'oauth:complete';
+  return (
+    <div className="flex flex-col gap-4">
+      {oauthUrl ? (
+        <>
+          <Field>
+            <FieldLabel htmlFor="oauth-authorization-url">授权链接</FieldLabel>
+            <InputGroup>
+              <InputGroupInput
+                id="oauth-authorization-url"
+                value={oauthUrl}
+                readOnly
+                tabIndex={-1}
+              />
+              <InputGroupAddon align="inline-end">
+                <OAuthIconButton
+                  label="打开授权链接"
+                  onClick={onOpen}
+                  disabled={loading || completing}
+                >
+                  <ExternalLink />
+                </OAuthIconButton>
+                <CopyButton
+                  value={oauthUrl}
+                  label="复制授权链接"
+                  disabled={loading || completing}
+                />
+                <RefreshButton
+                  label="重新生成授权链接"
+                  onRefresh={onGenerate}
+                  disabled={loading || completing}
+                />
+              </InputGroupAddon>
+            </InputGroup>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="oauth-callback-url">回调链接</FieldLabel>
+            <Input
+              id="oauth-callback-url"
+              value={callbackUrl}
+              onChange={(event) => setCallbackUrl(event.target.value)}
+              placeholder="粘贴浏览器最终跳转的链接"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={completing}
+            />
+          </Field>
+        </>
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          className="w-fit"
+          onClick={onGenerate}
+          disabled={loading}
+        >
+          {loading && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
+          生成授权链接
+        </Button>
+      )}
+      {oauthMessage && (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          {completing && <LoaderCircle size={15} className="animate-spin" />} {oauthMessage}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function OAuthIconButton({
+  label,
+  children,
+  onClick,
+  disabled = false,
+}: {
+  label: string;
+  children: ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={label}
+          onClick={onClick}
+          disabled={disabled}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 

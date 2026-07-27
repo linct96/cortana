@@ -28,6 +28,8 @@ export function useAccountManager(product: AccountProduct) {
   const [relayApiBaseUrl, setRelayApiBaseUrl] = useState('');
   const [showRelayApiKey, setShowRelayApiKey] = useState(false);
   const [oauthMessage, setOauthMessage] = useState<string | null>(null);
+  const [oauthUrl, setOauthUrl] = useState('');
+  const [callbackUrl, setCallbackUrl] = useState('');
   const [editing, setEditing] = useState<Profile | null>(null);
   const [editingAlias, setEditingAlias] = useState('');
   const [editingAuthJson, setEditingAuthJson] = useState('');
@@ -101,8 +103,10 @@ export function useAccountManager(product: AccountProduct) {
     stopOAuthProgress();
     oauthCleanupRef.current = await listenOAuthProgress<OAuthProgress>(
       (payload) => {
-        setOauthMessage(payload.message);
-        if (payload.stage === 'success') {
+        setOauthMessage(payload.stage === 'waiting' && product !== 'grok' ? null : payload.message);
+        if (payload.stage === 'exchanging') {
+          setBusy('oauth:complete');
+        } else if (payload.stage === 'success') {
           stopOAuthProgress();
           setBusy(null);
           closeAddDialog();
@@ -137,6 +141,8 @@ export function useAccountManager(product: AccountProduct) {
     setRelayApiBaseUrl('');
     setShowRelayApiKey(false);
     setOauthMessage(null);
+    setOauthUrl('');
+    setCallbackUrl('');
   }
 
   function closeEditor() {
@@ -324,9 +330,44 @@ export function useAccountManager(product: AccountProduct) {
     }
   }
 
+  async function generateOAuthLink() {
+    setBusy('oauth:prepare');
+    setOauthMessage('正在生成授权链接。');
+    setCallbackUrl('');
+    try {
+      await startOAuthProgress();
+      const authorizationUrl = await invoke<string | null>('start_oauth_add', {
+        product,
+        alias: alias || null,
+        activate: false,
+      });
+      if (!authorizationUrl) throw new Error('未能生成授权链接。');
+      setOauthUrl(authorizationUrl);
+    } catch (error) {
+      stopOAuthProgress();
+      toast.error(appError(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function openOAuthLink() {
+    if (!oauthUrl) return;
+    try {
+      await invoke('open_oauth_add', { authorizationUrl: oauthUrl });
+    } catch (error) {
+      toast.error(appError(error));
+    }
+  }
+
+  function changeAlias(value: string) {
+    setAlias(value);
+    if (oauthUrl) void invoke('update_oauth_alias', { alias: value }).catch(() => {});
+  }
+
   async function submitAdd(event: FormEvent) {
     event.preventDefault();
-    if (addMode === 'browser' || (product !== 'codex' && product !== 'claude')) {
+    if (product === 'grok') {
       setBusy('oauth');
       setOauthMessage('正在准备浏览器授权。');
       try {
@@ -339,9 +380,36 @@ export function useAccountManager(product: AccountProduct) {
       }
       return;
     }
+    if (addMode === 'browser') {
+      if (!callbackUrl.trim()) return;
+      setBusy('oauth:complete');
+      stopOAuthProgress();
+      try {
+        const profile = await invoke<Profile>('complete_oauth_add', {
+          callbackUrl: callbackUrl.trim(),
+        });
+        stopOAuthProgress();
+        closeAddDialog();
+        toast.success(`已添加 ${profile.alias}。`);
+        await refreshNewAccount(profile);
+      } catch (error) {
+        toast.error(appError(error));
+        await startOAuthProgress().catch(() => {});
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
 
     setBusy(addMode === 'paste' ? 'auth-json' : 'relay');
     try {
+      if (oauthUrl) {
+        stopOAuthProgress();
+        await invoke('cancel_oauth_add');
+        setOauthMessage(null);
+        setOauthUrl('');
+        setCallbackUrl('');
+      }
       const profile =
         addMode === 'paste'
           ? await invoke<Profile>('import_auth_json', {
@@ -464,6 +532,8 @@ export function useAccountManager(product: AccountProduct) {
     relayApiBaseUrl,
     showRelayApiKey,
     oauthMessage,
+    oauthUrl,
+    callbackUrl,
     editing,
     editingAlias,
     editingAuthJson,
@@ -477,11 +547,12 @@ export function useAccountManager(product: AccountProduct) {
     activeProfile,
     setAddOpen,
     setAddMode,
-    setAlias,
+    setAlias: changeAlias,
     setAuthJson,
     setRelayApiKey,
     setRelayApiBaseUrl,
     setShowRelayApiKey,
+    setCallbackUrl,
     setEditingAlias,
     setEditingAuthJson,
     setEditingRelayApiKey,
@@ -501,6 +572,8 @@ export function useAccountManager(product: AccountProduct) {
     switchTo,
     openCli,
     importCurrent,
+    generateOAuthLink,
+    openOAuthLink,
     submitAdd,
     openEditor,
     saveProfile,
