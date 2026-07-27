@@ -45,7 +45,7 @@ export function AppShell() {
   const previousMainPath = useRef<MainPath>('/accounts');
   const [activeProduct, setActiveProduct] = useState<AccountProduct>('codex');
   const [cliAvailable, setCliAvailable] = useState<boolean | null>(null);
-  const [configDirty, setConfigDirty] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   useEffect(() => {
     const nextPath = mainPathFor(pathname);
@@ -67,8 +67,8 @@ export function AppShell() {
         setActiveProduct,
         cliAvailable,
         setCliAvailable,
-        configDirty,
-        setConfigDirty,
+        hasUnsavedChanges,
+        setHasUnsavedChanges,
       }}
     >
       <div className="relative flex h-screen min-h-0 bg-background text-foreground">
@@ -80,7 +80,7 @@ export function AppShell() {
 }
 
 export function MainLayout() {
-  const { topPadding, activeProduct } = useAppShell();
+  const { topPadding } = useAppShell();
 
   return (
     <>
@@ -93,9 +93,7 @@ export function MainLayout() {
             <SidebarNavItem to="/accounts" label="账号" icon={UsersRound} />
             <SidebarNavItem to="/analytics" label="统计分析" icon={ChartNoAxesCombined} />
             <SidebarNavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
-            {activeProduct === 'codex' && (
-              <SidebarNavItem to="/prompts" label="提示词管理" icon={FileText} />
-            )}
+            <SidebarNavItem to="/prompts" label="提示词管理" icon={FileText} />
             <SidebarNavItem to="/config" label="配置" icon={FileCog} />
           </>
         }
@@ -126,21 +124,21 @@ export function AppContent({ children }: { children: ReactNode }) {
 
 function ProductMenu() {
   const navigate = useNavigate();
-  const { activeProduct, setActiveProduct, setCliAvailable, configDirty } = useAppShell();
+  const { activeProduct, setActiveProduct, setCliAvailable, hasUnsavedChanges } = useAppShell();
   const claude = activeProduct === 'claude';
   const antigravity = activeProduct === 'antigravity';
   const grok = activeProduct === 'grok';
 
   async function selectProduct(product: AccountProduct) {
     if (product === activeProduct) return;
-    if (configDirty && !window.confirm('当前配置的修改尚未保存，确定放弃并切换产品吗？')) {
+    if (hasUnsavedChanges && !window.confirm('当前修改尚未保存，确定放弃并切换产品吗？')) {
       return;
     }
     try {
       await invoke('set_active_product', { product });
       setActiveProduct(product);
       setCliAvailable(null);
-      await navigate({ to: '/accounts' });
+      await navigate({ to: '/accounts', ignoreBlocker: true });
     } catch (error) {
       toast.error(appError(error));
     }

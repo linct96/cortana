@@ -295,29 +295,37 @@ async fn dispatch_command(
             app.state(),
             arg(&args, "codexHome")?
         )),
-        "get_agents_status" => result!(agents::get_agents_status(app.state())),
+        "get_agents_status" => result!(agents::get_agents_status(
+            app.state(),
+            arg(&args, "product")?
+        )),
         "create_agents_profile" => result!(agents::create_agents_profile(
             app.state(),
+            arg(&args, "product")?,
             arg(&args, "name")?,
             arg(&args, "content")?
         )),
         "update_agents_profile" => result!(agents::update_agents_profile(
             app.state(),
+            arg(&args, "product")?,
             arg(&args, "profileId")?,
             arg(&args, "name")?,
             arg(&args, "content")?
         )),
         "activate_agents_profile" => result!(agents::activate_agents_profile(
             app.state(),
+            arg(&args, "product")?,
             arg(&args, "profileId")?,
             arg(&args, "force")?
         )),
         "import_current_agents" => result!(agents::import_current_agents(
             app.state(),
+            arg(&args, "product")?,
             arg(&args, "name")?
         )),
         "delete_agents_profile" => result!(agents::delete_agents_profile(
             app.state(),
+            arg(&args, "product")?,
             arg(&args, "profileId")?
         )),
         "get_usage_analytics" => {
