@@ -218,9 +218,13 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
       {account.addOpen && (
         <AddAccountDialog
           {...account}
+          onGenerateOAuth={account.generateOAuthLink}
+          onOpenOAuth={() => void account.openOAuthLink()}
           onSubmit={account.submitAdd}
           onClose={() =>
-            account.busy === 'oauth'
+            account.busy === 'oauth' ||
+            account.busy?.startsWith('oauth:') ||
+            Boolean(account.oauthUrl)
               ? void account.cancelOAuth()
               : account.busy !== 'auth-json' &&
                 account.busy !== 'relay' &&

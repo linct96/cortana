@@ -76,6 +76,7 @@ pub(super) struct PendingOAuth {
     pub(super) code_verifier: String,
     pub(super) state: String,
     pub(super) callback_url: String,
+    pub(super) exchanging: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

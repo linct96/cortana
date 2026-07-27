@@ -96,6 +96,7 @@ pub(super) fn start_device_oauth_add(
         code_verifier: String::new(),
         state: String::new(),
         callback_url: String::new(),
+        exchanging: false,
     });
     drop(pending);
 

@@ -184,6 +184,17 @@ async fn dispatch_command(
             arg(&args, "activate")?,
             optional(&args, "product")?
         )),
+        "open_oauth_add" => result!(oauth::open_oauth_add(
+            app.clone(),
+            app.state(),
+            arg(&args, "authorizationUrl")?
+        )),
+        "update_oauth_alias" => {
+            result!(oauth::update_oauth_alias(app.state(), arg(&args, "alias")?))
+        }
+        "complete_oauth_add" => result!(
+            oauth::complete_oauth_add(app.clone(), app.state(), arg(&args, "callbackUrl")?).await
+        ),
         "cancel_oauth_add" => result!(oauth::cancel_oauth_add(app.clone(), app.state())),
         "import_current_profile" => result!(
             accounts::import_current_profile(
