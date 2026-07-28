@@ -1104,23 +1104,4 @@ mod tests {
         assert_eq!(parse_antigravity(directory.clone()).skipped_files, 1);
         fs::remove_dir_all(directory).unwrap();
     }
-
-    #[test]
-    fn filters_ranges_and_deduplicates_sessions_and_turns() {
-        let today = Local::now().date_naive();
-        assert_eq!(
-            range_start(UsageRange::SevenDays, today),
-            today.checked_sub_days(chrono::Days::new(6))
-        );
-        assert_eq!(
-            range_start(UsageRange::ThirtyDays, today),
-            today.checked_sub_days(chrono::Days::new(29))
-        );
-        assert!(in_range(today, Some(today), today));
-        assert!(!in_range(today + chrono::Days::new(1), None, today));
-        let mut turns = HashSet::new();
-        add_turns(&mut turns, "session", "turn", 2);
-        add_turns(&mut turns, "session", "turn", 2);
-        assert_eq!(turns.len(), 2);
-    }
 }

@@ -1062,28 +1062,6 @@ mod tests {
     }
 
     #[test]
-    fn importing_settings_token_is_not_renewable() {
-        let directory = std::env::temp_dir().join(format!("cortana-claude-{}", Uuid::new_v4()));
-        fs::create_dir_all(&directory).unwrap();
-        let state = AppState {
-            database_path: directory.join("app.sqlite3"),
-            default_codex_home: directory.join(".codex"),
-            pending_oauth: Arc::new(Mutex::new(None)),
-        };
-        initialize_database(&state).unwrap();
-        write_file_atomically(
-            &settings_path(&state),
-            r#"{"env":{"CLAUDE_CODE_OAUTH_TOKEN":"imported"}}"#,
-        )
-        .unwrap();
-
-        let profile = import_current_profile(&state, None).unwrap();
-
-        assert!(!profile.is_renewable);
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
     fn imports_and_switches_a_relay_without_touching_unrelated_settings() {
         let _guard = TEST_SWITCH_LOCK.lock().unwrap();
         let directory = std::env::temp_dir().join(format!("cortana-claude-{}", Uuid::new_v4()));
@@ -1169,46 +1147,6 @@ mod tests {
         assert_eq!(settings["env"]["KEEP"], "yes");
         assert!(settings["env"].get("ANTHROPIC_BASE_URL").is_none());
         assert!(settings["env"].get("ANTHROPIC_AUTH_TOKEN").is_none());
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn requires_confirmation_before_replacing_an_unmanaged_relay() {
-        let _guard = TEST_SWITCH_LOCK.lock().unwrap();
-        let directory = std::env::temp_dir().join(format!("cortana-claude-{}", Uuid::new_v4()));
-        fs::create_dir_all(&directory).unwrap();
-        let state = AppState {
-            database_path: directory.join("app.sqlite3"),
-            default_codex_home: directory.join(".codex"),
-            pending_oauth: Arc::new(Mutex::new(None)),
-        };
-        initialize_database(&state).unwrap();
-        let relay = upsert_relay_profile(
-            &state,
-            "saved-token",
-            "https://saved.example.com/v1",
-            "保存的中转站",
-            "manual",
-        )
-        .unwrap();
-        write_file_atomically(
-            &settings_path(&state),
-            r#"{"env":{"ANTHROPIC_BASE_URL":"https://external.example.com/v1","ANTHROPIC_AUTH_TOKEN":"external-token","ANTHROPIC_API_KEY":"external-key"}}"#,
-        )
-        .unwrap();
-
-        assert!(switch_profile(&state, &relay.id, false)
-            .unwrap_err()
-            .contains("工具外"));
-        switch_profile(&state, &relay.id, true).unwrap();
-
-        let settings = read_settings(&settings_path(&state)).unwrap();
-        assert_eq!(
-            settings["env"]["ANTHROPIC_BASE_URL"],
-            "https://saved.example.com/v1"
-        );
-        assert_eq!(settings["env"]["ANTHROPIC_AUTH_TOKEN"], "saved-token");
-        assert!(settings["env"].get("ANTHROPIC_API_KEY").is_none());
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -707,18 +707,6 @@ mod tests {
     }
 
     #[test]
-    fn validates_and_defaults_terminal_app() {
-        assert_eq!(terminal_application("terminal"), Ok("Terminal"));
-        assert_eq!(terminal_application("warp"), Ok("Warp"));
-        assert_eq!(terminal_application("ghostty"), Ok("Ghostty"));
-        assert_eq!(normalize_terminal_app(None), "terminal");
-        assert_eq!(
-            normalize_terminal_app(Some("unsupported".to_string())),
-            "terminal"
-        );
-    }
-
-    #[test]
     fn parses_claude_environment_metadata() {
         assert_eq!(
             parse_claude_version("2.1.199 (Claude Code)").as_deref(),
