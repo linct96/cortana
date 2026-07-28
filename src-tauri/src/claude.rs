@@ -4,7 +4,7 @@ use super::{
     db::*,
     local_web, *,
 };
-use std::fmt::Write as _;
+use rusqlite::TransactionBehavior;
 
 pub(super) const CLAUDE_OAUTH_AUTHORIZE_URL: &str = "https://claude.ai/oauth/authorize";
 pub(super) const CLAUDE_OAUTH_TOKEN_URL: &str = "https://api.anthropic.com/v1/oauth/token";
@@ -172,7 +172,7 @@ pub(super) fn upsert_oauth_profile(
     let cli_token = mint_cli_token(&token.refresh_token)?;
     let account = token.account.unwrap_or_default();
     let account_id =
-        non_empty(&account.uuid).unwrap_or_else(|| token_fingerprint(&cli_token.access_token));
+        non_empty(&account.uuid).unwrap_or_else(|| credential_fingerprint(&cli_token.access_token));
     let credential = ClaudeCredential::OAuth {
         refresh_token: if cli_token.refresh_token.trim().is_empty() {
             token.refresh_token
@@ -211,7 +211,7 @@ pub(super) fn import_current_profile(
             upsert_credential(
                 state,
                 &credential,
-                &token_fingerprint(&token),
+                &credential_fingerprint(&token),
                 "",
                 requested_alias.as_deref().unwrap_or_default(),
             )
@@ -405,11 +405,14 @@ fn upsert_credential(
     let ClaudeCredential::OAuth { cli_token, .. } = credential else {
         return Err("Claude OAuth 凭据格式无效。".to_string());
     };
-    let connection = open_database(state)?;
-    let existing = profile_id_for_cli_token(&connection, cli_token)?.or(
-        connection
+    let mut connection = open_database(state)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(database_error)?;
+    let existing = profile_id_for_cli_token(&transaction, cli_token)?.or(
+        transaction
             .query_row(
-                "SELECT id FROM accounts WHERE product = 'claude' AND (account_id = ?1 OR (?2 <> '' AND email = ?2)) LIMIT 1",
+                "SELECT id FROM accounts WHERE product = 'claude' AND (account_id = ?1 OR (?2 <> '' AND email = ?2 COLLATE NOCASE)) LIMIT 1",
                 params![account_id, email],
                 |row| row.get::<_, String>(0),
             )
@@ -419,7 +422,7 @@ fn upsert_credential(
     let id = existing.unwrap_or_else(|| Uuid::new_v4().to_string());
     let auth_json = serde_json::to_string_pretty(credential).map_err(|error| error.to_string())?;
     let now = now_millis();
-    if connection
+    if transaction
         .execute(
             "UPDATE accounts SET account_type = 'oauth', api_base_url = NULL, account_id = ?1, email = ?2, alias = CASE WHEN ?3 = '' THEN alias ELSE ?3 END, auth_json = ?4, updated_at = ?5 WHERE id = ?6 AND product = 'claude'",
             params![account_id, email, requested_alias.trim(), auth_json, now, id],
@@ -430,13 +433,14 @@ fn upsert_credential(
         let alias = non_empty(requested_alias)
             .or_else(|| non_empty(email))
             .unwrap_or_else(|| "导入的 Claude Token".to_string());
-        connection
+        transaction
             .execute(
                 "INSERT INTO accounts (id, product, account_type, account_id, email, alias, plan_type, auth_json, created_at, updated_at, sort_order) VALUES (?1, 'claude', 'oauth', ?2, ?3, ?4, '', ?5, ?6, ?6, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'claude'), 0))",
                 params![id, account_id, email, alias, auth_json, now],
             )
             .map_err(database_error)?;
     }
+    transaction.commit().map_err(database_error)?;
     let active_id = profile_id_for_settings_credential(
         &connection,
         &settings_credential(&read_settings(&settings_path(state))?),
@@ -463,11 +467,15 @@ pub(super) fn upsert_relay_profile(
         source: source.to_string(),
     };
     let auth_json = serde_json::to_string_pretty(&credential).map_err(|error| error.to_string())?;
-    let connection = open_database(state)?;
-    let existing = connection
+    let fingerprint = credential_fingerprint(&auth_token);
+    let mut connection = open_database(state)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(database_error)?;
+    let existing = transaction
         .query_row(
-            "SELECT id, alias FROM accounts WHERE product = 'claude' AND account_type = 'relay' AND api_base_url = ?1 AND trim(COALESCE(json_extract(auth_json, '$.authToken'), '')) = ?2 LIMIT 1",
-            params![api_base_url, auth_token],
+            "SELECT id, alias FROM accounts WHERE product = 'claude' AND account_type = 'relay' AND api_base_url = ?1 AND account_id = ?2 LIMIT 1",
+            params![api_base_url, fingerprint],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
@@ -479,24 +487,25 @@ pub(super) fn upsert_relay_profile(
         } else {
             requested_alias.trim().to_string()
         };
-        connection
+        transaction
             .execute(
-                "UPDATE accounts SET alias = ?1, auth_json = ?2, api_base_url = ?3, updated_at = ?4 WHERE id = ?5 AND product = 'claude'",
-                params![alias, auth_json, api_base_url, now, id],
+                "UPDATE accounts SET alias = ?1, auth_json = ?2, api_base_url = ?3, account_id = ?4, updated_at = ?5 WHERE id = ?6 AND product = 'claude'",
+                params![alias, auth_json, api_base_url, fingerprint, now, id],
             )
             .map_err(database_error)?;
         id
     } else {
         let id = Uuid::new_v4().to_string();
         let alias = relay_alias(requested_alias, &api_base_url);
-        connection
+        transaction
             .execute(
-                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'claude', 'relay', ?2, '', '', ?3, '', ?4, ?5, ?5, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'claude'), 0))",
-                params![id, api_base_url, alias, auth_json, now],
+                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'claude', 'relay', ?2, ?3, '', ?4, '', ?5, ?6, ?6, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'claude'), 0))",
+                params![id, api_base_url, fingerprint, alias, auth_json, now],
             )
             .map_err(database_error)?;
         id
     };
+    transaction.commit().map_err(database_error)?;
     let active_id = profile_id_for_settings_credential(
         &connection,
         &settings_credential(&read_settings(&settings_path(state))?),
@@ -541,16 +550,7 @@ pub(super) fn update_relay_profile(
     let auth_token = requested_auth_token
         .and_then(non_empty)
         .unwrap_or(existing_auth_token);
-    let duplicate_exists = connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM accounts WHERE product = 'claude' AND account_type = 'relay' AND id <> ?1 AND api_base_url = ?2 AND trim(COALESCE(json_extract(auth_json, '$.authToken'), '')) = ?3)",
-            params![profile_id, api_base_url, auth_token],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(database_error)?;
-    if duplicate_exists {
-        return Err("已存在使用相同 API Key 和地址的中转站账户。".to_string());
-    }
+    let fingerprint = credential_fingerprint(&auth_token);
     let alias = relay_alias(requested_alias, &api_base_url);
     let credential = ClaudeCredential::Relay {
         auth_token,
@@ -561,15 +561,27 @@ pub(super) fn update_relay_profile(
         &settings_credential(&read_settings(&settings_path(state))?),
     )?;
     let active = active_id.as_deref() == Some(profile_id);
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(database_error)?;
+    let duplicate_exists = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM accounts WHERE product = 'claude' AND account_type = 'relay' AND id <> ?1 AND api_base_url = ?2 AND account_id = ?3)",
+            params![profile_id, api_base_url, fingerprint],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(database_error)?;
+    if duplicate_exists {
+        return Err("已存在使用相同 API Key 和地址的中转站账户。".to_string());
+    }
     if active {
         write_credential_to_settings(&settings_path(state), &credential, Some(&api_base_url))?;
     }
-    let transaction = connection.transaction().map_err(database_error)?;
     save_credential(&transaction, profile_id, &credential, false)?;
     transaction
         .execute(
-            "UPDATE accounts SET alias = ?1, api_base_url = ?2 WHERE id = ?3 AND product = 'claude'",
-            params![alias, api_base_url, profile_id],
+            "UPDATE accounts SET alias = ?1, api_base_url = ?2, account_id = ?3 WHERE id = ?4 AND product = 'claude'",
+            params![alias, api_base_url, fingerprint, profile_id],
         )
         .map_err(database_error)?;
     transaction.commit().map_err(database_error)?;
@@ -861,8 +873,8 @@ fn profile_id_for_relay(
 ) -> Result<Option<String>, String> {
     connection
         .query_row(
-            "SELECT id FROM accounts WHERE product = 'claude' AND account_type = 'relay' AND api_base_url = ?1 AND trim(COALESCE(json_extract(auth_json, '$.authToken'), '')) = ?2 LIMIT 1",
-            params![api_base_url, auth_token],
+            "SELECT id FROM accounts WHERE product = 'claude' AND account_type = 'relay' AND api_base_url = ?1 AND account_id = ?2 LIMIT 1",
+            params![api_base_url, credential_fingerprint(auth_token)],
             |row| row.get(0),
         )
         .optional()
@@ -930,7 +942,7 @@ fn detected_oauth_profile(token: &str) -> ProfileSummary {
         product: AccountProduct::Claude,
         account_type: ACCOUNT_TYPE_OAUTH.to_string(),
         api_base_url: None,
-        account_id: token_fingerprint(token),
+        account_id: credential_fingerprint(token),
         email: String::new(),
         alias: "当前 Claude Token".to_string(),
         plan_type: String::new(),
@@ -953,7 +965,7 @@ fn detected_relay_profile(api_base_url: &str, auth_token: &str) -> ProfileSummar
         product: AccountProduct::Claude,
         account_type: ACCOUNT_TYPE_RELAY.to_string(),
         api_base_url: Some(api_base_url.to_string()),
-        account_id: token_fingerprint(auth_token),
+        account_id: credential_fingerprint(auth_token),
         email: String::new(),
         alias: relay_alias("", api_base_url),
         plan_type: String::new(),
@@ -973,14 +985,6 @@ fn detected_relay_profile(api_base_url: &str, auth_token: &str) -> ProfileSummar
 fn expires_at(expires_in: Option<i64>) -> Option<i64> {
     let seconds = expires_in.unwrap_or(CLAUDE_CLI_TOKEN_SECONDS);
     (seconds > 0).then(|| now_millis().saturating_add(seconds.saturating_mul(1000)))
-}
-
-fn token_fingerprint(token: &str) -> String {
-    let mut fingerprint = String::from("token:");
-    for byte in Sha256::digest(token.as_bytes()) {
-        write!(&mut fingerprint, "{byte:02x}").expect("writing to a string cannot fail");
-    }
-    fingerprint
 }
 
 fn non_empty(value: &str) -> Option<String> {
@@ -1115,7 +1119,7 @@ mod tests {
         let oauth = upsert_credential(
             &state,
             &oauth,
-            &token_fingerprint("oauth-token"),
+            &credential_fingerprint("oauth-token"),
             "",
             "OAuth",
         )
@@ -1235,7 +1239,7 @@ mod tests {
         let profile = upsert_credential(
             &state,
             &credential,
-            &token_fingerprint("saved"),
+            &credential_fingerprint("saved"),
             "",
             "saved",
         )

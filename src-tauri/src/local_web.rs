@@ -11,7 +11,6 @@ const MAX_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 const WORKER_COUNT: usize = 4;
 
 pub(super) struct WebBridgeState {
-    token: String,
     runtime: Mutex<Option<RunningServer>>,
     last_error: Mutex<Option<String>>,
     update_lock: Mutex<()>,
@@ -20,6 +19,7 @@ pub(super) struct WebBridgeState {
 
 struct RunningServer {
     port: u16,
+    token: String,
     server: Arc<Server>,
     running: Arc<AtomicBool>,
     workers: Vec<thread::JoinHandle<()>>,
@@ -69,18 +69,9 @@ pub(super) fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
     if stored_port.as_deref() != Some(port.to_string().as_str()) {
         db::set_web_access_settings(&mut connection, enabled, port)?;
     }
-    let token = match db::get_setting(&connection, "web_access_token")? {
-        Some(token) if !token.is_empty() => token,
-        _ => {
-            let token = oauth::random_urlsafe(32);
-            db::set_setting(&connection, "web_access_token", &token)?;
-            token
-        }
-    };
     drop(connection);
 
     app.manage(WebBridgeState {
-        token,
         runtime: Mutex::new(None),
         last_error: Mutex::new(None),
         update_lock: Mutex::new(()),
@@ -93,7 +84,7 @@ pub(super) fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
 
     if enabled {
         let bridge = app.state::<WebBridgeState>();
-        match start_server(app.clone(), port, bridge.token.clone()) {
+        match start_server(app.clone(), port) {
             Ok(runtime) => *bridge.runtime.lock().map_err(lock_error)? = Some(runtime),
             Err(error) => *bridge.last_error.lock().map_err(lock_error)? = Some(error),
         }
@@ -511,7 +502,7 @@ pub(super) fn set_web_access_settings(
     let current = web_access_status(&app, &state)?;
     let needs_server = enabled && (!current.available || current.port != port);
     let next_runtime = needs_server
-        .then(|| start_server(app.clone(), port, bridge.token.clone()))
+        .then(|| start_server(app.clone(), port))
         .transpose()?;
 
     let mut connection = db::open_database(&state)?;
@@ -538,11 +529,12 @@ pub(super) fn set_web_access_settings(
     web_access_status(&app, &state)
 }
 
-fn start_server(app: tauri::AppHandle, port: u16, token: String) -> Result<RunningServer, String> {
+fn start_server(app: tauri::AppHandle, port: u16) -> Result<RunningServer, String> {
     let server = Arc::new(
         Server::http(("127.0.0.1", port))
             .map_err(|error| format!("无法监听 127.0.0.1:{port}：{error}"))?,
     );
+    let token = oauth::random_urlsafe(32);
     let running = Arc::new(AtomicBool::new(true));
     let mut workers = Vec::with_capacity(WORKER_COUNT);
     for _ in 0..WORKER_COUNT {
@@ -565,6 +557,7 @@ fn start_server(app: tauri::AppHandle, port: u16, token: String) -> Result<Runni
     }
     Ok(RunningServer {
         port,
+        token,
         server,
         running,
         workers,
@@ -580,8 +573,9 @@ fn handle_request(mut request: Request, app: &tauri::AppHandle, port: u16, token
 
     if request.url() == "/api/invoke" {
         let origin = header(&request, "Origin").unwrap_or_default();
-        let development = cfg!(debug_assertions) && is_development_origin(&origin);
-        if !is_production_origin(&origin, port) && !development {
+        if !(is_production_origin(&origin, port)
+            || cfg!(debug_assertions) && is_development_origin(&origin))
+        {
             respond_text(request, 403, "请求来源无效。", &[]);
             return;
         }
@@ -595,11 +589,7 @@ fn handle_request(mut request: Request, app: &tauri::AppHandle, port: u16, token
             respond_text(request, 405, "仅支持 POST 请求。", &cors);
             return;
         }
-        if !is_authorized(
-            header(&request, "Authorization").as_deref(),
-            token,
-            development,
-        ) {
+        if !is_authorized(header(&request, "Authorization").as_deref(), token) {
             respond_text(request, 401, "Web 访问授权无效。", &cors);
             return;
         }
@@ -690,22 +680,19 @@ fn header(request: &Request, name: &str) -> Option<String> {
 }
 
 fn is_development_origin(origin: &str) -> bool {
-    origin
-        .strip_prefix("http://127.0.0.1:")
-        .or_else(|| origin.strip_prefix("http://localhost:"))
-        .is_some_and(|port| port.parse::<u16>().is_ok())
+    origin == "http://127.0.0.1:5173"
 }
 
 fn is_production_origin(origin: &str, port: u16) -> bool {
-    origin == format!("http://127.0.0.1:{port}") || origin == format!("http://localhost:{port}")
+    origin == format!("http://127.0.0.1:{port}")
 }
 
 fn is_local_host(host: &str, port: u16) -> bool {
-    host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}")
+    host == format!("127.0.0.1:{port}")
 }
 
-fn is_authorized(authorization: Option<&str>, token: &str, development: bool) -> bool {
-    development || authorization == Some(format!("Bearer {token}").as_str())
+fn is_authorized(authorization: Option<&str>, token: &str) -> bool {
+    authorization == Some(format!("Bearer {token}").as_str())
 }
 
 fn cors_headers(origin: &str) -> Vec<(&'static str, String)> {
@@ -781,13 +768,21 @@ fn oauth_progress_snapshot(app: &tauri::AppHandle) -> Result<OAuthProgressSnapsh
 pub(super) fn browser_url(app: &tauri::AppHandle) -> Option<String> {
     let state = app.state::<AppState>();
     let status = web_access_status(app, &state).ok()?;
-    status.available.then(|| {
-        if cfg!(debug_assertions) {
-            format!("http://127.0.0.1:5173/?port={}#/", status.port)
-        } else {
-            let token = &app.state::<WebBridgeState>().token;
-            format!("http://127.0.0.1:{}/?token={token}#/", status.port)
-        }
+    if !status.available {
+        return None;
+    }
+    let bridge = app.state::<WebBridgeState>();
+    let runtime = bridge.runtime.lock().ok()?;
+    let runtime = runtime
+        .as_ref()
+        .filter(|runtime| runtime.port == status.port)?;
+    Some(if cfg!(debug_assertions) {
+        format!(
+            "http://127.0.0.1:5173/#token={}&port={}",
+            runtime.token, status.port
+        )
+    } else {
+        format!("http://127.0.0.1:{}/#token={}", status.port, runtime.token)
     })
 }
 
@@ -817,15 +812,17 @@ mod tests {
     #[test]
     fn restricts_origins_and_tokens() {
         assert!(is_development_origin("http://127.0.0.1:5173"));
-        assert!(is_development_origin("http://localhost:5174"));
+        assert!(!is_development_origin("http://127.0.0.1:5174"));
+        assert!(!is_development_origin("http://localhost:5173"));
         assert!(!is_development_origin("https://localhost:5173"));
         assert!(!is_development_origin("http://example.com:5173"));
         assert!(is_production_origin("http://127.0.0.1:11456", 11456));
-        assert!(is_production_origin("http://localhost:11456", 11456));
+        assert!(!is_production_origin("http://localhost:11456", 11456));
         assert!(!is_production_origin("http://127.0.0.1:11457", 11456));
-        assert!(is_local_host("localhost:11456", 11456));
-        assert!(is_authorized(Some("Bearer secret"), "secret", false));
-        assert!(!is_authorized(Some("Bearer wrong"), "secret", false));
-        assert!(is_authorized(None, "secret", true));
+        assert!(is_local_host("127.0.0.1:11456", 11456));
+        assert!(!is_local_host("localhost:11456", 11456));
+        assert!(is_authorized(Some("Bearer secret"), "secret"));
+        assert!(!is_authorized(Some("Bearer wrong"), "secret"));
+        assert!(!is_authorized(None, "secret"));
     }
 }
