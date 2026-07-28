@@ -1,4 +1,5 @@
 use super::{accounts::*, codex::write_file_atomically, db::*, grok_oauth, local_web, *};
+use rusqlite::TransactionBehavior;
 
 const BILLING_URL: &str = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 static SWITCH_LOCK: Mutex<()> = Mutex::new(());
@@ -104,12 +105,15 @@ pub(super) fn upsert_oauth_profile(
     let credential = build_credential(token, userinfo)?;
     let identity = credential_identity(&credential)?;
     let auth_json = serde_json::to_string_pretty(&credential).map_err(|error| error.to_string())?;
-    let connection = open_database(state)?;
-    let existing = profile_id_for_identity(&connection, &identity)?;
+    let mut connection = open_database(state)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(database_error)?;
+    let existing = profile_id_for_identity(&transaction, &identity)?;
     let now = now_millis();
     let id = existing.unwrap_or_else(|| Uuid::new_v4().to_string());
     let alias = alias_for(requested_alias, &identity);
-    if connection
+    if transaction
         .execute(
             "UPDATE accounts SET account_id = ?1, email = ?2, alias = CASE WHEN ?3 = '' THEN alias ELSE ?3 END, auth_json = ?4, updated_at = ?5 WHERE id = ?6 AND product = 'grok'",
             params![identity.account_id, identity.email, requested_alias.trim(), auth_json, now, id],
@@ -117,13 +121,14 @@ pub(super) fn upsert_oauth_profile(
         .map_err(database_error)?
         == 0
     {
-        connection
+        transaction
             .execute(
                 "INSERT INTO accounts (id, product, account_type, account_id, email, alias, plan_type, auth_json, created_at, updated_at, sort_order) VALUES (?1, 'grok', 'oauth', ?2, ?3, ?4, '', ?5, ?6, ?6, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'grok'), 0))",
                 params![id, identity.account_id, identity.email, alias, auth_json, now],
             )
             .map_err(database_error)?;
     }
+    transaction.commit().map_err(database_error)?;
     let active_id = active_profile_id(&connection, &auth_path(state))?;
     get_profile_summary_for_product(&connection, AccountProduct::Grok, &id, active_id.as_deref())
 }
@@ -136,12 +141,15 @@ pub(super) fn import_current_profile(
         .ok_or_else(|| "未找到受支持的 Grok xAI OAuth 凭据。".to_string())?;
     let identity = credential_identity(&credential)?;
     let auth_json = serde_json::to_string_pretty(&credential).map_err(|error| error.to_string())?;
-    let connection = open_database(state)?;
-    let existing = profile_id_for_identity(&connection, &identity)?;
+    let mut connection = open_database(state)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(database_error)?;
+    let existing = profile_id_for_identity(&transaction, &identity)?;
     let now = now_millis();
     let id = existing.unwrap_or_else(|| Uuid::new_v4().to_string());
     let requested_alias = requested_alias.unwrap_or_default();
-    if connection
+    if transaction
         .execute(
             "UPDATE accounts SET account_id = ?1, email = ?2, alias = CASE WHEN ?3 = '' THEN alias ELSE ?3 END, auth_json = ?4, updated_at = ?5 WHERE id = ?6 AND product = 'grok'",
             params![identity.account_id, identity.email, requested_alias.trim(), auth_json, now, id],
@@ -149,13 +157,14 @@ pub(super) fn import_current_profile(
         .map_err(database_error)?
         == 0
     {
-        connection
+        transaction
             .execute(
                 "INSERT INTO accounts (id, product, account_type, account_id, email, alias, plan_type, auth_json, created_at, updated_at, sort_order) VALUES (?1, 'grok', 'oauth', ?2, ?3, ?4, '', ?5, ?6, ?6, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'grok'), 0))",
                 params![id, identity.account_id, identity.email, alias_for(&requested_alias, &identity), auth_json, now],
             )
             .map_err(database_error)?;
     }
+    transaction.commit().map_err(database_error)?;
     get_profile_summary_for_product(&connection, AccountProduct::Grok, &id, Some(&id))
 }
 
@@ -656,7 +665,7 @@ fn profile_id_for_identity(
 ) -> Result<Option<String>, String> {
     connection
         .query_row(
-            "SELECT id FROM accounts WHERE product = 'grok' AND (account_id = ?1 OR (?2 <> '' AND email = ?2)) LIMIT 1",
+            "SELECT id FROM accounts WHERE product = 'grok' AND (account_id = ?1 OR (?2 <> '' AND email = ?2 COLLATE NOCASE)) LIMIT 1",
             params![identity.account_id, identity.email],
             |row| row.get(0),
         )

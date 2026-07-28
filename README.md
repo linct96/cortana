@@ -37,7 +37,7 @@ pnpm dev
 pnpm --filter @cortana/desktop dev:web
 ```
 
-Web 访问默认关闭，可在桌面应用的“设置 → 常规 → Web 访问”中启用，默认地址为 `http://127.0.0.1:11456`。开发时需运行 `pnpm dev` 以同时启动桌面后端，再访问 Vite 提供的 Web 链接。生产环境可从托盘菜单“在浏览器中打开”进入；首次进入会自动完成本机访问授权。
+Web 访问默认关闭，可在桌面应用的“设置 → 常规 → Web 访问”中启用，默认地址为 `http://127.0.0.1:11456`。开发和生产环境都从桌面应用或托盘菜单“在浏览器中打开”进入；浏览器会获得仅在当前服务和标签页内有效的本机访问授权。
 
 Codex 默认使用 `~/.codex/auth.json`，Claude 使用 `~/.claude/settings.json`，Grok 默认使用 `$GROK_HOME/auth.json` 或 `~/.grok/auth.json`。Claude 中转站账户使用 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN`；所有档案仅保存在本机用户级 SQLite 数据库，包含可用认证令牌或 API Key；请勿把该数据库上传到同步盘或代码仓库。
 

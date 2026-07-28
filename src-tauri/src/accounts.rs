@@ -5,11 +5,12 @@ use super::{
     grok,
     oauth::{
         build_codex_auth_json, chatgpt_user_id_from_auth_json, decode_jwt_claims,
-        identity_from_auth_json, refresh_oauth_token,
+        identity_from_auth_json, refresh_oauth_token_detailed,
     },
     tray::*,
     *,
 };
+use rusqlite::TransactionBehavior;
 
 const USAGE_REFRESH_TICK: Duration = Duration::from_secs(10);
 const USAGE_REFRESH_MIN_INTERVAL_MILLIS: i64 = 10_000;
@@ -19,6 +20,8 @@ const ACTIVE_REFRESH_MINUTES: [u64; 4] = [1, 2, 5, 10];
 const INACTIVE_REFRESH_MINUTES: [u64; 4] = [5, 10, 30, 60];
 const CODEX_CLI_TOKEN_REFRESH_BUFFER_SECONDS: i64 = 60 * 60;
 const CODEX_RELAY_API_KEY_ENV: &str = "CORTANA_CODEX_RELAY_API_KEY";
+// ponytail: 账号量很小；出现可测量的跨账号等待时再拆为每账号锁。
+static CODEX_AUTH_REFRESH_LOCK: Mutex<()> = Mutex::new(());
 
 #[tauri::command]
 pub(super) async fn get_app_status(
@@ -75,8 +78,7 @@ pub(super) async fn open_codex_cli_with_profile(
 
 fn open_codex_cli_with_profile_internal(state: &AppState, profile_id: &str) -> Result<(), String> {
     let connection = open_database(state)?;
-    let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
-    let (account_type, api_base_url, mut auth_json) = connection
+    let (account_type, api_base_url, auth_json) = connection
         .query_row(
             "SELECT account_type, api_base_url, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
             params![profile_id],
@@ -93,21 +95,11 @@ fn open_codex_cli_with_profile_internal(state: &AppState, profile_id: &str) -> R
         .ok_or_else(|| "Codex 账户不存在。".to_string())?;
 
     let (environment, arguments) = if account_type == ACCOUNT_TYPE_OAUTH {
-        if codex_cli_token_needs_refresh(&auth_json, Utc::now().timestamp())? {
-            let token = refresh_oauth_token(&extract_refresh_token(&auth_json)?)?;
-            auth_json = build_codex_auth_json(&token)?;
-            persist_codex_cli_auth(
-                state,
-                &connection,
-                profile_id,
-                &auth_json,
-                active_id.as_deref() == Some(profile_id),
-            )?;
-        }
+        let auth = ensure_fresh_codex_auth(state, profile_id, None)?;
         (
             vec![(
                 "CODEX_ACCESS_TOKEN".to_string(),
-                codex_cli_access_token(&auth_json)?,
+                codex_access_token(&auth.auth_json)?,
             )],
             vec![
                 "-c".to_string(),
@@ -126,7 +118,7 @@ fn open_codex_cli_with_profile_internal(state: &AppState, profile_id: &str) -> R
     env::open_codex_cli(state, &environment, &arguments)
 }
 
-fn codex_cli_access_token(auth_json: &str) -> Result<String, String> {
+fn codex_access_token(auth_json: &str) -> Result<String, String> {
     serde_json::from_str::<Value>(auth_json)
         .map_err(|_| "存档的 auth.json 已损坏。".to_string())?
         .get("tokens")
@@ -138,14 +130,139 @@ fn codex_cli_access_token(auth_json: &str) -> Result<String, String> {
         .ok_or_else(|| "账户缺少 access_token，请重新授权。".to_string())
 }
 
-fn codex_cli_token_needs_refresh(auth_json: &str, now: i64) -> Result<bool, String> {
-    let access_token = match codex_cli_access_token(auth_json) {
+fn codex_token_needs_refresh(auth_json: &str, now: i64) -> Result<bool, String> {
+    let access_token = match codex_access_token(auth_json) {
         Ok(token) => token,
         Err(_) => return Ok(true),
     };
     Ok(decode_jwt_claims(&access_token)
         .and_then(|claims| claims.get("exp").and_then(Value::as_i64))
         .is_some_and(|expires_at| expires_at <= now + CODEX_CLI_TOKEN_REFRESH_BUFFER_SECONDS))
+}
+
+fn codex_auth_needs_refresh(
+    auth_json: &str,
+    rejected_auth: Option<&str>,
+    now: i64,
+) -> Result<bool, String> {
+    rejected_auth.map_or_else(
+        || codex_token_needs_refresh(auth_json, now),
+        |rejected| Ok(auth_json == rejected),
+    )
+}
+
+#[derive(Clone)]
+struct CodexAuth {
+    account_id: String,
+    auth_json: String,
+}
+
+fn ensure_fresh_codex_auth(
+    state: &AppState,
+    profile_id: &str,
+    rejected_auth: Option<&str>,
+) -> Result<CodexAuth, String> {
+    let _guard = CODEX_AUTH_REFRESH_LOCK
+        .lock()
+        .map_err(|_| "Codex 认证刷新锁不可用。".to_string())?;
+    let connection = open_database(state)?;
+    let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
+    let (account_type, account_id, mut auth_json) = connection
+        .query_row(
+            "SELECT account_type, account_id, auth_json
+             FROM accounts WHERE id = ?1 AND product = 'codex'",
+            params![profile_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(database_error)?
+        .ok_or_else(|| "账户不存在。".to_string())?;
+    if account_type != ACCOUNT_TYPE_OAUTH {
+        return Err("中转站账户不支持 OAuth 认证刷新。".to_string());
+    }
+    let needs_refresh =
+        codex_auth_needs_refresh(&auth_json, rejected_auth, Utc::now().timestamp())?;
+    if needs_refresh {
+        let refresh_token = match extract_refresh_token(&auth_json) {
+            Ok(refresh_token) => refresh_token,
+            Err(error) => {
+                mark_codex_oauth_invalidated(&connection, profile_id)?;
+                return Err(error);
+            }
+        };
+        let token = match refresh_oauth_token_detailed(&refresh_token) {
+            Ok(token) => token,
+            Err(error) => {
+                if error.reauthorization_required {
+                    mark_codex_oauth_invalidated(&connection, profile_id)?;
+                }
+                return Err(error.message);
+            }
+        };
+        auth_json = build_codex_auth_json(&token)?;
+        persist_codex_cli_auth(
+            state,
+            &connection,
+            profile_id,
+            &auth_json,
+            active_id.as_deref() == Some(profile_id),
+        )?;
+    }
+    Ok(CodexAuth {
+        account_id,
+        auth_json,
+    })
+}
+
+fn mark_codex_oauth_invalidated(connection: &Connection, profile_id: &str) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE accounts SET oauth_invalidated_at = ?1
+             WHERE id = ?2 AND product = 'codex'",
+            params![now_millis(), profile_id],
+        )
+        .map_err(database_error)?;
+    Ok(())
+}
+
+fn with_codex_auth_retry<T>(
+    state: &AppState,
+    profile_id: &str,
+    request: impl Fn(&CodexAuth) -> Result<T, CodexApiError>,
+) -> Result<T, String> {
+    let auth = ensure_fresh_codex_auth(state, profile_id, None)?;
+    match request(&auth) {
+        Ok(value) => Ok(value),
+        Err(error) if error.unauthorized => {
+            let refreshed =
+                ensure_fresh_codex_auth(state, profile_id, Some(auth.auth_json.as_str()))?;
+            finish_codex_request(state, profile_id, request(&refreshed))
+        }
+        Err(error) => finish_codex_request(state, profile_id, Err(error)),
+    }
+}
+
+fn finish_codex_request<T>(
+    state: &AppState,
+    profile_id: &str,
+    result: Result<T, CodexApiError>,
+) -> Result<T, String> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            if error.authentication_invalidated {
+                let connection = open_database(state)?;
+                mark_codex_oauth_invalidated(&connection, profile_id)?;
+            }
+            Err(error.message)
+        }
+    }
 }
 
 fn persist_codex_cli_auth(
@@ -356,26 +473,10 @@ pub(super) async fn get_profile_reset_credits(
 ) -> Result<ResetCredits, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let credits = with_codex_auth_retry(&state, &profile_id, |auth| {
+            fetch_reset_credits(&auth.auth_json, &auth.account_id)
+        })?;
         let connection = open_database(&state)?;
-        let (account_type, account_id, auth_json) = connection
-            .query_row(
-                "SELECT account_type, account_id, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
-                params![profile_id],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(database_error)?
-            .ok_or_else(|| "账户不存在。".to_string())?;
-        if account_type != ACCOUNT_TYPE_OAUTH {
-            return Err("中转站账户不支持重置卡查询。".to_string());
-        }
-        let credits = fetch_reset_credits(&auth_json, &account_id)?;
         connection
             .execute(
                 "UPDATE accounts SET reset_credits_available_count = ?1 WHERE id = ?2 AND product = 'codex'",
@@ -410,57 +511,20 @@ fn consume_profile_reset_credit_internal(
     idempotency_key: &str,
 ) -> Result<ResetCreditConsumeResult, String> {
     let (credit_id, idempotency_key) = validate_reset_credit_request(credit_id, idempotency_key)?;
-    let connection = open_database(state)?;
-    let (account_type, account_id, mut auth_json) = connection
-        .query_row(
-            "SELECT account_type, account_id, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
-            params![profile_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            },
+    let outcome = with_codex_auth_retry(state, profile_id, |auth| {
+        consume_reset_credit(
+            &auth.auth_json,
+            &auth.account_id,
+            &credit_id,
+            &idempotency_key,
         )
-        .optional()
-        .map_err(database_error)?
-        .ok_or_else(|| "账户不存在。".to_string())?;
-    if account_type != ACCOUNT_TYPE_OAUTH {
-        return Err("中转站账户不支持使用重置卡。".to_string());
-    }
-    let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
-    if codex_cli_token_needs_refresh(&auth_json, Utc::now().timestamp())? {
-        let token = refresh_oauth_token(&extract_refresh_token(&auth_json)?)?;
-        auth_json = build_codex_auth_json(&token)?;
-        persist_codex_cli_auth(
-            state,
-            &connection,
-            profile_id,
-            &auth_json,
-            active_id.as_deref() == Some(profile_id),
-        )?;
-    }
-    let outcome = match consume_reset_credit(&auth_json, &account_id, &credit_id, &idempotency_key)
-    {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            if error.authentication_invalidated {
-                connection
-                    .execute(
-                        "UPDATE accounts SET oauth_invalidated_at = ?1 WHERE id = ?2 AND product = 'codex'",
-                        params![now_millis(), profile_id],
-                    )
-                    .map_err(database_error)?;
-            }
-            return Err(error.message);
-        }
-    };
-    drop(connection);
+    })?;
     let (profile, credits) = refresh_profile_usage_with_credits_internal(state, profile_id)?;
     let credits = match credits {
         Some(credits) => credits,
-        None => fetch_reset_credits(&auth_json, &account_id)?,
+        None => with_codex_auth_retry(state, profile_id, |auth| {
+            fetch_reset_credits(&auth.auth_json, &auth.account_id)
+        })?,
     };
     Ok(ResetCreditConsumeResult {
         outcome,
@@ -489,8 +553,9 @@ struct ResetCreditConsumeRequest<'a> {
     credit_id: &'a str,
 }
 
-struct ResetCreditConsumeError {
+struct CodexApiError {
     message: String,
+    unauthorized: bool,
     authentication_invalidated: bool,
 }
 
@@ -499,12 +564,13 @@ fn consume_reset_credit(
     account_id: &str,
     credit_id: &str,
     idempotency_key: &str,
-) -> Result<ResetCreditConsumeOutcome, ResetCreditConsumeError> {
+) -> Result<ResetCreditConsumeOutcome, CodexApiError> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|error| ResetCreditConsumeError {
+        .map_err(|error| CodexApiError {
             message: error.to_string(),
+            unauthorized: false,
             authentication_invalidated: false,
         })?;
     let request = build_reset_credit_request(
@@ -514,8 +580,9 @@ fn consume_reset_credit(
         auth_json,
         account_id,
     )
-    .map_err(|message| ResetCreditConsumeError {
+    .map_err(|message| CodexApiError {
         message,
+        unauthorized: false,
         authentication_invalidated: false,
     })?;
     let response = request
@@ -524,28 +591,32 @@ fn consume_reset_credit(
             credit_id,
         })
         .send()
-        .map_err(|error| ResetCreditConsumeError {
+        .map_err(|error| CodexApiError {
             message: format!("重置卡使用失败：{error}"),
+            unauthorized: false,
             authentication_invalidated: false,
         })?;
     let status = response.status();
-    let body = response.text().map_err(|error| ResetCreditConsumeError {
+    let body = response.text().map_err(|error| CodexApiError {
         message: format!("无法读取重置卡使用结果：{error}"),
+        unauthorized: false,
         authentication_invalidated: false,
     })?;
     if !status.is_success() {
         let message = backend_error_message(&body);
-        return Err(ResetCreditConsumeError {
+        return Err(CodexApiError {
             message: if message.is_empty() {
                 format!("重置卡使用失败：HTTP {status}")
             } else {
                 format!("重置卡使用失败：{message}")
             },
+            unauthorized: status.as_u16() == 401,
             authentication_invalidated: authentication_invalidated(status.as_u16(), &body),
         });
     }
-    parse_reset_credit_consume_response(&body).map_err(|message| ResetCreditConsumeError {
+    parse_reset_credit_consume_response(&body).map_err(|message| CodexApiError {
         message,
+        unauthorized: false,
         authentication_invalidated: false,
     })
 }
@@ -1036,8 +1107,8 @@ pub(super) fn profile_id_for_auth(
         };
         return connection
             .query_row(
-                "SELECT id FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND api_base_url = ?1 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?2 LIMIT 1",
-                params![api_base_url, api_key],
+                "SELECT id FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND api_base_url = ?1 AND account_id = ?2 LIMIT 1",
+                params![api_base_url, credential_fingerprint(&api_key)],
                 |row| row.get(0),
             )
             .optional()
@@ -1204,11 +1275,6 @@ pub(super) fn update_profile_internal(
     if account_type != ACCOUNT_TYPE_OAUTH {
         return Err("中转站账户请使用中转站编辑表单。".to_string());
     }
-    if find_codex_oauth_profile(&connection, &identity.account_id, &user_id)?
-        .is_some_and(|(id, _, _)| id != profile_id)
-    {
-        return Err("该 Codex 账号已存在。".to_string());
-    }
     if identity.email.is_empty() {
         identity.email = existing_email;
     }
@@ -1220,7 +1286,14 @@ pub(super) fn update_profile_internal(
         .then(|| apply_profile_files(state, &formatted_auth_json, ACCOUNT_TYPE_OAUTH, None))
         .transpose()?;
     let database_result = (|| {
-        let transaction = connection.transaction().map_err(database_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        if find_codex_oauth_profile(&transaction, &identity.account_id, &user_id)?
+            .is_some_and(|(id, _, _)| id != profile_id)
+        {
+            return Err("该 Codex 账号已存在。".to_string());
+        }
         let changed = transaction
             .execute(
                 "UPDATE accounts SET account_id = ?1, chatgpt_user_id = ?2, email = ?3, alias = ?4, plan_type = CASE WHEN ?5 = '' THEN plan_type ELSE ?5 END, auth_json = ?6, oauth_invalidated_at = NULL, updated_at = ?7 WHERE id = ?8 AND product = 'codex'",
@@ -1258,8 +1331,11 @@ pub(super) fn upsert_profile_from_auth(
     if identity.account_id.is_empty() || user_id.is_empty() {
         return Err("auth.json 缺少 Codex 账号或用户标识，请重新授权。".to_string());
     }
-    let connection = open_database(state)?;
-    let existing = find_codex_oauth_profile(&connection, &identity.account_id, &user_id)?;
+    let mut connection = open_database(state)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(database_error)?;
+    let existing = find_codex_oauth_profile(&transaction, &identity.account_id, &user_id)?;
     let now = now_millis();
     let id = if let Some((id, existing_alias, existing_email)) = existing {
         let alias = if requested_alias.is_empty() {
@@ -1271,7 +1347,7 @@ pub(super) fn upsert_profile_from_auth(
         } else {
             requested_alias.trim().to_string()
         };
-        connection
+        transaction
             .execute(
                 "UPDATE accounts SET account_type = 'oauth', api_base_url = NULL, account_id = ?1, chatgpt_user_id = ?2, email = ?3, alias = ?4, plan_type = CASE WHEN ?5 = '' THEN plan_type ELSE ?5 END, auth_json = ?6, oauth_invalidated_at = NULL, updated_at = ?7 WHERE id = ?8 AND product = 'codex'",
                 params![identity.account_id, user_id, identity.email, alias, identity.plan_type, auth_json, now, id],
@@ -1281,7 +1357,7 @@ pub(super) fn upsert_profile_from_auth(
     } else {
         let id = Uuid::new_v4().to_string();
         let alias = oauth_alias(requested_alias, &identity);
-        connection
+        transaction
             .execute(
                 "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, chatgpt_user_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'codex', 'oauth', NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'codex'), 0))",
                 params![id, identity.account_id, user_id, identity.email, alias, identity.plan_type, auth_json, now],
@@ -1289,6 +1365,7 @@ pub(super) fn upsert_profile_from_auth(
             .map_err(database_error)?;
         id
     };
+    transaction.commit().map_err(database_error)?;
     let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
     get_profile_summary(&connection, &id, active_id.as_deref())
 }
@@ -1310,11 +1387,15 @@ pub(super) fn upsert_relay_profile(
 ) -> Result<ProfileSummary, String> {
     let api_base_url = normalize_api_base_url(api_base_url)?;
     let auth_json = build_relay_auth_json(api_key)?;
-    let connection = open_database(state)?;
-    let existing = connection
+    let fingerprint = credential_fingerprint(api_key);
+    let mut connection = open_database(state)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(database_error)?;
+    let existing = transaction
         .query_row(
-            "SELECT id, alias FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND api_base_url = ?1 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?2 LIMIT 1",
-            params![api_base_url, api_key.trim()],
+            "SELECT id, alias FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND api_base_url = ?1 AND account_id = ?2 LIMIT 1",
+            params![api_base_url, fingerprint],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
@@ -1326,24 +1407,25 @@ pub(super) fn upsert_relay_profile(
         } else {
             requested_alias.trim().to_string()
         };
-        connection
+        transaction
             .execute(
-                "UPDATE accounts SET alias = ?1, auth_json = ?2, api_base_url = ?3, updated_at = ?4 WHERE id = ?5 AND product = 'codex'",
-                params![alias, auth_json, api_base_url, now, id],
+                "UPDATE accounts SET alias = ?1, auth_json = ?2, api_base_url = ?3, account_id = ?4, updated_at = ?5 WHERE id = ?6 AND product = 'codex'",
+                params![alias, auth_json, api_base_url, fingerprint, now, id],
             )
             .map_err(database_error)?;
         id
     } else {
         let id = Uuid::new_v4().to_string();
         let alias = relay_alias(requested_alias, &api_base_url);
-        connection
+        transaction
             .execute(
-                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'codex', 'relay', ?2, '', '', ?3, '', ?4, ?5, ?5, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'codex'), 0))",
-                params![id, api_base_url, alias, auth_json, now],
+                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'codex', 'relay', ?2, ?3, '', ?4, '', ?5, ?6, ?6, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'codex'), 0))",
+                params![id, api_base_url, fingerprint, alias, auth_json, now],
             )
             .map_err(database_error)?;
         id
     };
+    transaction.commit().map_err(database_error)?;
     let (_, active_id) = resolve_auth_state(&connection, &auth_path(state)?)?;
     get_profile_summary(&connection, &id, active_id.as_deref())
 }
@@ -1376,16 +1458,7 @@ pub(super) fn update_relay_profile_internal(
         .or_else(|| extract_api_key(&existing_auth_json).ok().flatten())
         .ok_or_else(|| "中转站账户缺少 API Key。".to_string())?;
     let auth_json = build_relay_auth_json(&api_key)?;
-    let duplicate_exists = connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND id <> ?1 AND api_base_url = ?2 AND trim(COALESCE(json_extract(auth_json, '$.OPENAI_API_KEY'), '')) = ?3)",
-            params![profile_id, api_base_url, api_key],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(database_error)?;
-    if duplicate_exists {
-        return Err("已存在使用相同 API Key 和地址的中转站账户。".to_string());
-    }
+    let fingerprint = credential_fingerprint(&api_key);
     let alias = relay_alias(requested_alias, &api_base_url);
     let auth_path = auth_path(state)?;
     let (_, active_id) = resolve_auth_state(&connection, &auth_path)?;
@@ -1394,11 +1467,23 @@ pub(super) fn update_relay_profile_internal(
         .then(|| apply_profile_files(state, &auth_json, ACCOUNT_TYPE_RELAY, Some(&api_base_url)))
         .transpose()?;
     let database_result = (|| {
-        let transaction = connection.transaction().map_err(database_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(database_error)?;
+        let duplicate_exists = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND id <> ?1 AND api_base_url = ?2 AND account_id = ?3)",
+                params![profile_id, api_base_url, fingerprint],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(database_error)?;
+        if duplicate_exists {
+            return Err("已存在使用相同 API Key 和地址的中转站账户。".to_string());
+        }
         transaction
             .execute(
-                "UPDATE accounts SET alias = ?1, api_base_url = ?2, auth_json = ?3, updated_at = ?4 WHERE id = ?5 AND product = 'codex'",
-                params![alias, api_base_url, auth_json, now_millis(), profile_id],
+                "UPDATE accounts SET alias = ?1, api_base_url = ?2, account_id = ?3, auth_json = ?4, updated_at = ?5 WHERE id = ?6 AND product = 'codex'",
+                params![alias, api_base_url, fingerprint, auth_json, now_millis(), profile_id],
             )
             .map_err(database_error)?;
         transaction.commit().map_err(database_error)
@@ -1611,43 +1696,18 @@ fn refresh_profile_usage_with_credits_internal(
     state: &AppState,
     profile_id: &str,
 ) -> Result<(ProfileSummary, Option<ResetCredits>), String> {
-    let connection = open_database(state)?;
-    let (account_type, account_id, auth_json) = connection
-        .query_row(
-            "SELECT account_type, account_id, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
-            params![profile_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(database_error)?
-        .ok_or_else(|| "账户不存在。".to_string())?;
-    if account_type == ACCOUNT_TYPE_RELAY {
-        return Err("中转站账户不支持额度查询。".to_string());
-    }
-    let usage = match fetch_account_usage(&auth_json, &account_id) {
-        Ok(usage) => usage,
-        Err(error) => {
-            if error.authentication_invalidated {
-                connection
-                    .execute(
-                        "UPDATE accounts SET oauth_invalidated_at = ?1 WHERE id = ?2 AND product = 'codex'",
-                        params![now_millis(), profile_id],
-                    )
-                    .map_err(database_error)?;
-            }
-            return Err(error.message);
-        }
-    };
+    let usage = with_codex_auth_retry(state, profile_id, |auth| {
+        fetch_account_usage(&auth.auth_json, &auth.account_id)
+    })?;
     let plan_type = usage.plan_type.trim().to_lowercase();
     let reset_credits = (!plan_type.is_empty() && plan_type != "free")
-        .then(|| fetch_reset_credits(&auth_json, &account_id))
+        .then(|| {
+            with_codex_auth_retry(state, profile_id, |auth| {
+                fetch_reset_credits(&auth.auth_json, &auth.account_id)
+            })
+        })
         .transpose()?;
+    let connection = open_database(state)?;
     let now = now_millis();
     connection
         .execute(
@@ -1688,31 +1748,51 @@ struct ResetCreditResponse {
     granted_at: String,
 }
 
-pub(super) fn fetch_reset_credits(
-    auth_json: &str,
-    account_id: &str,
-) -> Result<ResetCredits, String> {
+fn fetch_reset_credits(auth_json: &str, account_id: &str) -> Result<ResetCredits, CodexApiError> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| CodexApiError {
+            message: error.to_string(),
+            unauthorized: false,
+            authentication_invalidated: false,
+        })?;
     let response = build_reset_credit_request(
         &client,
         reqwest::Method::GET,
         RESET_CREDITS_URL,
         auth_json,
         account_id,
-    )?
+    )
+    .map_err(|message| CodexApiError {
+        message,
+        unauthorized: false,
+        authentication_invalidated: false,
+    })?
     .send()
-    .map_err(|error| format!("重置卡查询失败：{error}"))?;
+    .map_err(|error| CodexApiError {
+        message: format!("重置卡查询失败：{error}"),
+        unauthorized: false,
+        authentication_invalidated: false,
+    })?;
     let status = response.status();
-    let body = response
-        .text()
-        .map_err(|error| format!("无法读取重置卡信息：{error}"))?;
+    let body = response.text().map_err(|error| CodexApiError {
+        message: format!("无法读取重置卡信息：{error}"),
+        unauthorized: false,
+        authentication_invalidated: false,
+    })?;
     if !status.is_success() {
-        return Err(format!("重置卡查询失败：HTTP {status}"));
+        return Err(CodexApiError {
+            message: format!("重置卡查询失败：HTTP {status}"),
+            unauthorized: status.as_u16() == 401,
+            authentication_invalidated: authentication_invalidated(status.as_u16(), &body),
+        });
     }
-    parse_reset_credits(&body)
+    parse_reset_credits(&body).map_err(|message| CodexApiError {
+        message,
+        unauthorized: false,
+        authentication_invalidated: false,
+    })
 }
 
 fn build_reset_credit_request(
@@ -1782,17 +1862,10 @@ pub(super) fn parse_reset_credits(body: &str) -> Result<ResetCredits, String> {
     })
 }
 
-struct AccountUsageFetchError {
-    message: String,
-    authentication_invalidated: bool,
-}
-
-fn fetch_account_usage(
-    auth_json: &str,
-    account_id: &str,
-) -> Result<AccountUsage, AccountUsageFetchError> {
-    let auth: Value = serde_json::from_str(auth_json).map_err(|_| AccountUsageFetchError {
+fn fetch_account_usage(auth_json: &str, account_id: &str) -> Result<AccountUsage, CodexApiError> {
+    let auth: Value = serde_json::from_str(auth_json).map_err(|_| CodexApiError {
         message: "存档的 auth.json 已损坏。".to_string(),
+        unauthorized: false,
         authentication_invalidated: false,
     })?;
     let access_token = auth
@@ -1801,8 +1874,9 @@ fn fetch_account_usage(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|token| !token.is_empty())
-        .ok_or_else(|| AccountUsageFetchError {
+        .ok_or_else(|| CodexApiError {
             message: "账户缺少 access_token，请重新授权。".to_string(),
+            unauthorized: false,
             authentication_invalidated: true,
         })?;
     let account_id = if account_id.is_empty() {
@@ -1813,8 +1887,9 @@ fn fetch_account_usage(
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|error| AccountUsageFetchError {
+        .map_err(|error| CodexApiError {
             message: error.to_string(),
+            unauthorized: false,
             authentication_invalidated: false,
         })?;
     let mut request = client
@@ -1825,29 +1900,33 @@ fn fetch_account_usage(
     if !account_id.is_empty() {
         request = request.header("ChatGPT-Account-ID", &account_id);
     }
-    let response = request.send().map_err(|error| AccountUsageFetchError {
+    let response = request.send().map_err(|error| CodexApiError {
         message: format!("账户信息查询失败：{error}"),
+        unauthorized: false,
         authentication_invalidated: false,
     })?;
     let status = response.status();
-    let body = response.text().map_err(|error| AccountUsageFetchError {
+    let body = response.text().map_err(|error| CodexApiError {
         message: format!("无法读取账户信息：{error}"),
+        unauthorized: false,
         authentication_invalidated: false,
     })?;
     if !status.is_success() {
         let message = backend_error_message(&body);
         let authentication_invalidated = authentication_invalidated(status.as_u16(), &body);
-        return Err(AccountUsageFetchError {
+        return Err(CodexApiError {
             message: if message.is_empty() {
                 format!("账户信息查询失败：HTTP {status}")
             } else {
                 format!("账户信息查询失败：{message}")
             },
+            unauthorized: status.as_u16() == 401,
             authentication_invalidated,
         });
     }
-    parse_account_usage(&body).map_err(|message| AccountUsageFetchError {
+    parse_account_usage(&body).map_err(|message| CodexApiError {
         message,
+        unauthorized: false,
         authentication_invalidated: false,
     })
 }
@@ -1980,10 +2059,13 @@ mod tests {
 
     #[test]
     fn prepares_temporary_codex_cli_credentials() {
-        assert!(!codex_cli_token_needs_refresh(&access_token_auth(Some(4_601)), 1_000).unwrap());
-        assert!(codex_cli_token_needs_refresh(&access_token_auth(Some(4_600)), 1_000).unwrap());
-        assert!(!codex_cli_token_needs_refresh(&access_token_auth(None), 1_000).unwrap());
-        assert!(codex_cli_token_needs_refresh(r#"{"tokens":{}}"#, 1_000).unwrap());
+        assert!(!codex_token_needs_refresh(&access_token_auth(Some(4_601)), 1_000).unwrap());
+        assert!(codex_token_needs_refresh(&access_token_auth(Some(4_600)), 1_000).unwrap());
+        assert!(!codex_token_needs_refresh(&access_token_auth(None), 1_000).unwrap());
+        assert!(codex_token_needs_refresh(r#"{"tokens":{}}"#, 1_000).unwrap());
+        let current = access_token_auth(None);
+        assert!(codex_auth_needs_refresh(&current, Some(&current), 1_000).unwrap());
+        assert!(!codex_auth_needs_refresh(&current, Some("already-refreshed"), 1_000).unwrap());
 
         let secret = "sk-secret-value";
         let (environment, arguments) =
@@ -2222,6 +2304,55 @@ mod tests {
         );
         fs::remove_dir_all(directory).unwrap();
     }
+
+    #[test]
+    fn concurrent_profile_upserts_create_one_account() {
+        let directory =
+            std::env::temp_dir().join(format!("codex-concurrent-upsert-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let state = AppState {
+            database_path: directory.join("app.sqlite3"),
+            default_codex_home: directory.clone(),
+            pending_oauth: Arc::new(Mutex::new(None)),
+        };
+        initialize_database(&state).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let handles = (0..4)
+            .map(|index| {
+                let state = state.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    upsert_profile_from_auth(
+                        &state,
+                        &oauth_auth("shared-account", "shared-user", "rt", "at"),
+                        &format!("alias-{index}"),
+                    )
+                    .unwrap()
+                    .id
+                })
+            })
+            .collect::<Vec<_>>();
+        let ids = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+
+        assert!(ids.iter().all(|id| id == &ids[0]));
+        assert_eq!(
+            open_database(&state)
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM accounts WHERE product = 'codex'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn matches_current_oauth_after_token_rotation() {
         let directory =

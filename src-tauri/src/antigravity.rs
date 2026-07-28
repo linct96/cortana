@@ -1,4 +1,5 @@
 use super::{accounts::*, codex::write_file_atomically, db::*, *};
+use rusqlite::TransactionBehavior;
 
 const ACTIVE_PROFILE_SETTING: &str = "antigravity_active_profile_id";
 const TOKEN_REFRESH_SKEW_SECONDS: i64 = 15 * 60;
@@ -216,10 +217,13 @@ pub(super) fn upsert_oauth_profile(
         .unwrap_or(email);
     let auth_json = build_auth_json(token, access_token, refresh_token)?;
 
-    let connection = open_database(state)?;
-    let existing_id = connection
+    let mut connection = open_database(state)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(database_error)?;
+    let existing_id = transaction
         .query_row(
-            "SELECT id FROM accounts WHERE product = 'antigravity' AND (account_id = ?1 OR email = ?2) LIMIT 1",
+            "SELECT id FROM accounts WHERE product = 'antigravity' AND (account_id = ?1 OR email = ?2 COLLATE NOCASE) LIMIT 1",
             params![account_id, email],
             |row| row.get::<_, String>(0),
         )
@@ -234,7 +238,7 @@ pub(super) fn upsert_oauth_profile(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(email);
-    if connection
+    if transaction
         .execute(
             "UPDATE accounts SET account_id = ?1, email = ?2, alias = CASE WHEN ?3 = '' THEN alias ELSE ?3 END, auth_json = ?4, updated_at = ?5 WHERE id = ?6 AND product = 'antigravity'",
             params![account_id, email, requested_alias, auth_json, now, id],
@@ -247,13 +251,14 @@ pub(super) fn upsert_oauth_profile(
         } else {
             requested_alias
         };
-        connection
+        transaction
             .execute(
                 "INSERT INTO accounts (id, product, account_type, account_id, email, alias, plan_type, auth_json, created_at, updated_at, sort_order) VALUES (?1, 'antigravity', 'oauth', ?2, ?3, ?4, '', ?5, ?6, ?6, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'antigravity'), 0))",
                 params![id, account_id, email, alias, auth_json, now],
             )
             .map_err(database_error)?;
     }
+    transaction.commit().map_err(database_error)?;
     get_profile_summary_for_product(&connection, AccountProduct::Antigravity, &id, None)
 }
 

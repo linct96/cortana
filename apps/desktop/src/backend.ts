@@ -8,17 +8,17 @@ const PORT_KEY = 'cortana.webPort';
 export const isTauri = '__TAURI_INTERNALS__' in window;
 
 if (!isTauri) {
+  localStorage.removeItem(TOKEN_KEY);
   const url = new URL(window.location.href);
-  const token = url.searchParams.get('token');
-  const port = Number(url.searchParams.get('port'));
-  if (token) localStorage.setItem(TOKEN_KEY, token);
+  const bootstrap = new URLSearchParams(url.hash.slice(1));
+  const token = bootstrap.get('token');
+  const port = Number(bootstrap.get('port'));
+  if (token) sessionStorage.setItem(TOKEN_KEY, token);
   if (Number.isInteger(port) && port >= 1024 && port <= 65535) {
     localStorage.setItem(PORT_KEY, String(port));
   }
-  if (token || url.searchParams.has('port')) {
-    url.searchParams.delete('token');
-    url.searchParams.delete('port');
-    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  if (token || bootstrap.has('port')) {
+    window.history.replaceState(null, '', `${url.pathname}${url.search}#/`);
   }
 }
 
@@ -27,13 +27,12 @@ export async function invoke<T>(command: string, args: Record<string, unknown> =
 
   let response: Response;
   try {
+    const token = sessionStorage.getItem(TOKEN_KEY);
     response = await fetch(`${webApiOrigin()}/api/invoke`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(localStorage.getItem(TOKEN_KEY)
-          ? { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY)}` }
-          : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ command, args }),
     });
@@ -41,7 +40,7 @@ export async function invoke<T>(command: string, args: Record<string, unknown> =
     throw new Error('Cortana Web 访问未启用或本机服务未运行。');
   }
   if (!response.ok) {
-    if (response.status === 401) localStorage.removeItem(TOKEN_KEY);
+    if (response.status === 401) sessionStorage.removeItem(TOKEN_KEY);
     throw new Error((await response.text()) || `本机服务请求失败（HTTP ${response.status}）。`);
   }
   return response.json() as Promise<T>;

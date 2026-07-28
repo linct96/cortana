@@ -567,11 +567,25 @@ fn validate_callback_url(callback_url: &str, pending: &PendingOAuth) -> Result<U
     Ok(callback)
 }
 
+pub(super) struct OAuthRefreshError {
+    pub(super) message: String,
+    pub(super) reauthorization_required: bool,
+}
+
 pub(super) fn refresh_oauth_token(refresh_token: &str) -> Result<OAuthTokenResponse, String> {
+    refresh_oauth_token_detailed(refresh_token).map_err(|error| error.message)
+}
+
+pub(super) fn refresh_oauth_token_detailed(
+    refresh_token: &str,
+) -> Result<OAuthTokenResponse, OAuthRefreshError> {
     let client = Client::builder()
         .timeout(Duration::from_secs(60))
         .build()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| OAuthRefreshError {
+            message: error.to_string(),
+            reauthorization_required: false,
+        })?;
     let response = client
         .post(OAUTH_TOKEN_URL)
         .header("Accept", "application/json")
@@ -581,16 +595,34 @@ pub(super) fn refresh_oauth_token(refresh_token: &str) -> Result<OAuthTokenRespo
             ("client_id", OAUTH_CLIENT_ID),
         ])
         .send()
-        .map_err(|error| format!("认证信息刷新请求失败：{error}"))?;
+        .map_err(|error| OAuthRefreshError {
+            message: format!("认证信息刷新请求失败：{error}"),
+            reauthorization_required: false,
+        })?;
     let status = response.status();
-    let body = response.text().map_err(|error| error.to_string())?;
+    let body = response.text().map_err(|error| OAuthRefreshError {
+        message: error.to_string(),
+        reauthorization_required: false,
+    })?;
     if !status.is_success() {
-        return Err(format!("认证信息刷新失败（HTTP {}）。", status.as_u16()));
+        return Err(OAuthRefreshError {
+            message: format!("认证信息刷新失败（HTTP {}）。", status.as_u16()),
+            reauthorization_required: oauth_refresh_requires_reauthorization(
+                status.as_u16(),
+                &body,
+            ),
+        });
     }
     let mut token: OAuthTokenResponse =
-        serde_json::from_str(&body).map_err(|_| "认证信息刷新响应不是有效 JSON。".to_string())?;
+        serde_json::from_str(&body).map_err(|_| OAuthRefreshError {
+            message: "认证信息刷新响应不是有效 JSON。".to_string(),
+            reauthorization_required: false,
+        })?;
     if token.access_token.as_deref().unwrap_or_default().is_empty() {
-        return Err("认证信息刷新未返回 access_token。".to_string());
+        return Err(OAuthRefreshError {
+            message: "认证信息刷新未返回 access_token。".to_string(),
+            reauthorization_required: false,
+        });
     }
     if token
         .refresh_token
@@ -601,6 +633,16 @@ pub(super) fn refresh_oauth_token(refresh_token: &str) -> Result<OAuthTokenRespo
         token.refresh_token = Some(refresh_token.to_string());
     }
     Ok(token)
+}
+
+fn oauth_refresh_requires_reauthorization(status: u16, body: &str) -> bool {
+    if !matches!(status, 400 | 401) {
+        return false;
+    }
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| value.get("error")?.as_str().map(str::to_string))
+        .is_some_and(|error| matches!(error.as_str(), "invalid_grant" | "invalid_token"))
 }
 
 pub(super) fn build_codex_auth_json(token: &OAuthTokenResponse) -> Result<String, String> {
@@ -995,6 +1037,26 @@ mod tests {
 
         assert_eq!(auth["tokens"]["account_id"], "account-123");
         assert_eq!(auth["tokens"]["refresh_token"], "refreshed-rt");
+    }
+
+    #[test]
+    fn only_invalid_refresh_credentials_require_reauthorization() {
+        assert!(oauth_refresh_requires_reauthorization(
+            400,
+            r#"{"error":"invalid_grant"}"#
+        ));
+        assert!(oauth_refresh_requires_reauthorization(
+            401,
+            r#"{"error":"invalid_token"}"#
+        ));
+        assert!(!oauth_refresh_requires_reauthorization(
+            500,
+            r#"{"error":"invalid_grant"}"#
+        ));
+        assert!(!oauth_refresh_requires_reauthorization(
+            400,
+            r#"{"error":"server_error"}"#
+        ));
     }
 
     #[test]

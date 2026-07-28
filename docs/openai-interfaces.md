@@ -76,7 +76,8 @@ code_verifier=<pkce_verifier>
 ```
 
 令牌会转换为项目约定的 `auth.json` 结构，详见 [Codex auth.json 结构](auth-json.md)。
-当前项目尚未调用 `refresh_token` grant；访问令牌失效后，账户信息查询会返回错误，需要重新授权。
+项目会在访问令牌即将过期或接口首次返回 `401` 时调用 `refresh_token` grant，
+持久化轮换后的令牌并重试一次。仅在刷新凭据明确失效时要求重新授权。
 
 ## 套餐与额度
 
