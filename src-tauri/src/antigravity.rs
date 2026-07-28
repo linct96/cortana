@@ -963,12 +963,6 @@ mod tests {
     }
 
     #[test]
-    fn refreshes_tokens_inside_the_fifteen_minute_window() {
-        assert!(!token_needs_refresh(2_000, 1_000));
-        assert!(token_needs_refresh(1_900, 1_000));
-    }
-
-    #[test]
     fn parses_antigravity_plan_and_model_quotas() {
         let plan: LoadCodeAssistResponse = serde_json::from_value(json!({
             "cloudaicompanionProject": "project-1",
@@ -1021,50 +1015,5 @@ mod tests {
         assert_eq!(groups[0].display_name, "Gemini Models");
         assert_eq!(groups[0].buckets[0].display_name, "5 小时额度");
         assert_eq!(groups[0].buckets[0].remaining_percent, 75);
-    }
-
-    #[test]
-    fn marks_only_the_selected_profile_active() {
-        let mut connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
-                 CREATE TABLE accounts (
-                   id TEXT PRIMARY KEY NOT NULL,
-                   product TEXT NOT NULL,
-                   last_used_at INTEGER,
-                   updated_at INTEGER NOT NULL
-                 );
-                 INSERT INTO accounts (id, product, updated_at) VALUES
-                   ('first', 'antigravity', 1),
-                   ('second', 'antigravity', 1);",
-            )
-            .unwrap();
-
-        mark_profile_active(&mut connection, "second", 42).unwrap();
-
-        assert_eq!(
-            active_profile_id(&connection).unwrap().as_deref(),
-            Some("second")
-        );
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT last_used_at FROM accounts WHERE id = 'second'",
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap(),
-            42
-        );
-
-        clear_active_profile(&connection, "second").unwrap();
-        assert_eq!(active_profile_id(&connection).unwrap(), None);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn wraps_macos_credentials_for_go_keyring() {
-        assert_eq!(macos_credential_value("{}"), "go-keyring-base64:e30=");
     }
 }

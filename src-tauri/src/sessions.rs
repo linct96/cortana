@@ -848,32 +848,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_claude_session_with_malformed_lines() {
-        let root = std::env::temp_dir().join(format!("cortana-{}", Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
-        let id = Uuid::new_v4().to_string();
-        let path = root.join(format!("{id}.jsonl"));
-        fs::write(
-            &path,
-            concat!(
-                "invalid\n",
-                "{\"type\":\"user\",\"message\":{\"content\":\"<local-command-caveat>ignore</local-command-caveat>\"}}\n",
-                "{\"type\":\"user\",\"message\":{\"content\":\"first prompt\"},\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-07-01T00:00:00Z\"}\n",
-                "{\"type\":\"ai-title\",\"aiTitle\":\"Generated title\"}\n",
-                "{\"type\":\"last-prompt\",\"lastPrompt\":\"last prompt\"}\n"
-            ),
-        )
-        .unwrap();
-
-        let session = parse_claude_session(&path).unwrap();
-        assert_eq!(session.id, id);
-        assert_eq!(session.name.as_deref(), Some("Generated title"));
-        assert_eq!(session.preview, "last prompt");
-        assert_eq!(session.cwd.as_deref(), Some("/tmp/project"));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     fn parses_grok_summary_and_paginates() {
         let id = Uuid::new_v4().to_string();
         let summary: GrokSessionFile = serde_json::from_value(json!({

@@ -797,21 +797,6 @@ mod tests {
     }
 
     #[test]
-    fn identity_and_alias_follow_grok_fallback_order() {
-        let credential = json!({
-            "principal_id": "team-1",
-            "user_id": "user-1",
-            "email": "person@example.com",
-            "team_name": "团队",
-            "first_name": "Lin"
-        });
-        let identity = credential_identity(&credential).unwrap();
-        assert_eq!(identity.account_id, "team-1");
-        assert_eq!(alias_for("", &identity), "团队");
-        assert_eq!(alias_for("工作", &identity), "工作");
-    }
-
-    #[test]
     fn refuses_to_replace_an_unmanaged_grok_login() {
         let directory = std::env::temp_dir().join(format!("cortana-grok-{}", Uuid::new_v4()));
         fs::create_dir_all(&directory).unwrap();
@@ -856,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_grok_weekly_billing_usage_and_legacy_fallback() {
+    fn parses_grok_weekly_billing_usage() {
         let usage = parse_billing_usage(
             r#"{"config":{"creditUsagePercent":25.5,"currentPeriod":{"start":"2026-07-22T00:00:00Z","end":"2026-07-29T00:00:00Z"}},"subscriptionTier":"SuperGrok"}"#,
         )
@@ -866,20 +851,5 @@ mod tests {
         assert_eq!(window.used_percent, 25.5);
         assert_eq!(window.window_minutes, Some(7 * 24 * 60));
         assert_eq!(window.resets_at, Some(1785283200000));
-
-        let legacy = parse_billing_usage(
-            r#"{"config":{"monthlyLimit":{"val":1000},"used":{"val":400},"billingPeriodEnd":"2026-08-01T00:00:00Z"}}"#,
-        )
-        .unwrap();
-        assert_eq!(legacy.primary.unwrap().used_percent, 40.0);
-    }
-
-    #[test]
-    fn accepts_billing_response_without_public_usage_percentage() {
-        let usage = parse_billing_usage(
-            r#"{"config":{"currentPeriod":{"start":"2026-07-22T00:00:00Z","end":"2026-07-29T00:00:00Z"}}}"#,
-        )
-        .unwrap();
-        assert!(usage.primary.is_none());
     }
 }

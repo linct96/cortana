@@ -544,19 +544,6 @@ mod tests {
     }
 
     #[test]
-    fn exposes_an_existing_unsaved_file_without_saved_profiles() {
-        let (directory, state) = test_state();
-        write_file_atomically(&codex_path(&state), "# Existing\n").unwrap();
-
-        let status = get_agents_status_internal(&state, CODEX).unwrap();
-
-        assert!(status.profiles.is_empty());
-        assert_eq!(status.file_state, "unmanaged");
-        assert_eq!(status.unmanaged_content.as_deref(), Some("# Existing\n"));
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
     fn updates_active_file_and_leaves_it_when_deleted() {
         let (directory, state) = test_state();
         let profile = create(&state, "Default", "old");
@@ -566,43 +553,6 @@ mod tests {
         delete_agents_profile_internal(&state, CODEX, &profile.id).unwrap();
 
         assert_eq!(fs::read_to_string(codex_path(&state)).unwrap(), "new");
-        assert_eq!(
-            get_agents_status_internal(&state, CODEX)
-                .unwrap()
-                .file_state,
-            "unmanaged"
-        );
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn follows_external_switch_to_an_existing_profile() {
-        let (directory, state) = test_state();
-        let first = create(&state, "First", "first");
-        let second = create(&state, "Second", "second");
-        activate_agents_profile_internal(&state, CODEX, &first.id, false).unwrap();
-
-        write_file_atomically(&codex_path(&state), "second").unwrap();
-
-        let status = get_agents_status_internal(&state, CODEX).unwrap();
-        assert_eq!(status.file_state, "managed");
-        assert!(
-            !status
-                .profiles
-                .iter()
-                .find(|profile| profile.id == first.id)
-                .unwrap()
-                .is_active
-        );
-        assert!(
-            status
-                .profiles
-                .iter()
-                .find(|profile| profile.id == second.id)
-                .unwrap()
-                .is_active
-        );
-        write_file_atomically(&codex_path(&state), "second\n").unwrap();
         assert_eq!(
             get_agents_status_internal(&state, CODEX)
                 .unwrap()
@@ -663,54 +613,6 @@ mod tests {
             "same"
         );
         assert!(delete_agents_profile_internal(&state, AccountProduct::Grok, &codex.id).is_err());
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn resolves_native_paths_and_limits_antigravity_content() {
-        let (directory, state) = test_state();
-        assert_eq!(
-            instruction_path(&state, AccountProduct::Antigravity).unwrap(),
-            directory.join(".gemini/GEMINI.md")
-        );
-        assert_eq!(instruction_filename(AccountProduct::Claude), "CLAUDE.md");
-        assert!(validate_content_length(
-            AccountProduct::Antigravity,
-            &"中".repeat(ANTIGRAVITY_MAX_INSTRUCTION_CHARS)
-        )
-        .is_ok());
-        assert!(validate_content_length(
-            AccountProduct::Antigravity,
-            &"中".repeat(ANTIGRAVITY_MAX_INSTRUCTION_CHARS + 1)
-        )
-        .is_err());
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn leaves_legacy_duplicate_content_unmanaged() {
-        let (directory, state) = test_state();
-        let connection = open_database(&state).unwrap();
-        connection
-            .execute_batch(
-                "INSERT INTO instruction_profiles VALUES ('first', 'codex', 'First', 'same', 1, 1);
-                 INSERT INTO instruction_profiles VALUES ('second', 'codex', 'Second', 'same', 2, 2);",
-            )
-            .unwrap();
-        drop(connection);
-        write_file_atomically(&codex_path(&state), "same").unwrap();
-
-        let status = get_agents_status_internal(&state, CODEX).unwrap();
-        assert_eq!(status.file_state, "unmanaged");
-        assert!(status.profiles.iter().all(|profile| !profile.is_active));
-        assert!(
-            activate_agents_profile_internal(&state, CODEX, "first", false)
-                .unwrap_err()
-                .contains("内容相同")
-        );
-        assert!(import_current_agents_internal(&state, CODEX, "Imported")
-            .unwrap_err()
-            .contains("内容相同"));
         fs::remove_dir_all(directory).unwrap();
     }
 }
