@@ -32,20 +32,22 @@ Codex API Key 登录可以使用更精简的结构：
 }
 ```
 
-本应用的中转站账户仅保存 `OPENAI_API_KEY`，不写入 `auth_mode`，并在 `config.toml` 中设置：
+本应用的中转站账户不写入 `auth.json`，而是在 `config.toml` 的自定义 Provider 中保存
+Bearer Token：
 
 ```toml
-model_provider = "relay"
+forced_login_method = "api"
+model_provider = "cortana"
 
-[model_providers.relay]
-name = "Relay"
+[model_providers.cortana]
+name = "Cortana"
 base_url = "https://relay.example.com/v1"
-wire_api = "responses"
-requires_openai_auth = true
+experimental_bearer_token = "<api-key>"
 ```
 
-中转站地址必须兼容 Responses API。切换回 OAuth 账户时，应用会删除顶层
-`model_provider`、`openai_base_url` 以及整个 `model_providers` 配置，其他设置和注释会保留。
+中转站地址必须兼容 Responses API。切换到中转站账户时，应用会删除旧 `auth.json`；
+切换回 OAuth 账户时会重新写入 OAuth `auth.json`，并删除顶层 `model_provider`
+以及整个 `model_providers` 配置。其他设置和注释会保留。
 
-默认文件路径为 `~/.codex/auth.json`。该文件包含完整认证凭据，不得提交到代码仓库或公开分享。
+默认配置路径为 `~/.codex/config.toml`。该文件包含中转站 API Key，不得提交到代码仓库或公开分享。
 使用 HTTP 中转地址时，API Key 可能通过明文网络传输，应优先使用 HTTPS。
