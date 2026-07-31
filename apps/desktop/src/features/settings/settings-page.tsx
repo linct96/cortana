@@ -80,7 +80,7 @@ function SettingsContent() {
     setBusy('loading');
     setLoadError(null);
     void Promise.allSettled([
-      invoke<AppStatus>('get_app_status'),
+      invoke<AppStatus>('get_app_status', { product: 'codex' }),
       invoke<UsageRefreshSettings>('get_usage_refresh_settings'),
       invoke<TerminalApp>('get_terminal_app'),
     ])
@@ -323,6 +323,7 @@ function SettingsContent() {
                     <Tooltip>
                       <TooltipTrigger render={<span className="inline-flex" />}>
                         <Button
+                          className="size-5 rounded-sm p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
                           variant="ghost"
                           size="icon-xs"
                           type="button"
@@ -335,21 +336,6 @@ function SettingsContent() {
                       <TooltipContent>在浏览器中打开</TooltipContent>
                     </Tooltip>
                   )}
-                  <Badge
-                    variant={
-                      status?.webAccess.enabled
-                        ? status.webAccess.available
-                          ? 'default'
-                          : 'destructive'
-                        : 'secondary'
-                    }
-                  >
-                    {status?.webAccess.enabled
-                      ? status.webAccess.available
-                        ? '运行中'
-                        : '启动失败'
-                      : '已关闭'}
-                  </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">允许本机浏览器控制 Cortana</p>
                 {!isTauri && <p className="text-xs text-muted-foreground">仅可在桌面应用中修改</p>}
@@ -385,7 +371,9 @@ function SettingsContent() {
                         setWebPortError(null);
                       }}
                       onBlur={commitWebPort}
-                      disabled={!isTauri || busy === 'web' || busy === 'loading'}
+                      disabled={
+                        !isTauri || import.meta.env.DEV || busy === 'web' || busy === 'loading'
+                      }
                     />
                     {webPortError && <FieldError match>{webPortError}</FieldError>}
                   </Field>
