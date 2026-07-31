@@ -111,6 +111,13 @@ export type UsageWindow = {
   resetsAt: number | null;
 };
 
+export function usageWindowLabel(minutes: number | null) {
+  if (minutes === 300) return '5h额度';
+  if (minutes === 10_080) return '周额度';
+  if (minutes !== null && minutes >= 28 * 1_440 && minutes <= 32 * 1_440) return '月额度';
+  return '剩余额度';
+}
+
 export type AuthState = {
   kind: 'managed' | 'unmanaged' | 'missing';
   message: string;
@@ -130,10 +137,11 @@ export type OAuthProgress = {
   profile: Profile | null;
 };
 
-export type PendingConfirm = {
-  kind: 'force-switch' | 'delete';
-  profile: Profile;
-} | null;
+export type PendingConfirm =
+  | { kind: 'force-switch' | 'delete'; profile: Profile }
+  | { kind: 'force-grok-relay'; profile: Profile; enabled: boolean }
+  | { kind: 'force-grok-edit'; profile: Profile }
+  | null;
 
 export type AddMode = 'browser' | 'paste' | 'relay';
 
