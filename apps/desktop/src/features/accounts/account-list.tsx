@@ -10,6 +10,7 @@ import {
   SquareTerminal,
   Tickets,
   Trash2,
+  X,
 } from 'lucide-react';
 import { Fragment } from 'react';
 import antigravityIcon from '../../assets/antigravity.svg';
@@ -29,15 +30,17 @@ import { Progress, ProgressLabel, ProgressValue } from '../../components/ui/prog
 import { Separator } from '../../components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { cn, formatResetTime } from '../../utils';
-import { planLabel, type Profile, type UsageWindow } from './types';
+import { planLabel, type Profile, type UsageWindow, usageWindowLabel } from './types';
 
 export function AccountRow({
   profile,
+  modelProfileName,
   index,
   isBusy,
   isRefreshing,
   isOpeningCli,
   onSwitch,
+  onEnabledChange,
   onOpenCli,
   onRefresh,
   onEdit,
@@ -46,11 +49,13 @@ export function AccountRow({
   onDelete,
 }: {
   profile: Profile;
+  modelProfileName?: string;
   index: number;
   isBusy: boolean;
   isRefreshing: boolean;
   isOpeningCli: boolean;
   onSwitch: () => void;
+  onEnabledChange: (enabled: boolean) => void;
   onOpenCli: () => void;
   onRefresh: () => void;
   onEdit: () => void;
@@ -110,20 +115,58 @@ export function AccountRow({
           <strong className="truncate text-sm font-medium">{profile.alias}</strong>
           {profile.needsReauthorization && <Badge variant="destructive">已过期</Badge>}
           {profile.planType && <Badge variant="outline">{planLabel(profile.planType)}</Badge>}
-          {profile.isActive && <Badge>使用中</Badge>}
+          {profile.isActive && (
+            <Badge>
+              {profile.product === 'grok' && profile.accountType === 'relay' ? '已启用' : '使用中'}
+            </Badge>
+          )}
+          {modelProfileName && <Badge variant="outline">{modelProfileName}</Badge>}
         </div>
         <AccountMeta profile={profile} onViewQuota={onViewQuota} />
       </div>
-      <div className="pointer-events-none flex min-w-25 justify-end gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 has-focus-visible:pointer-events-auto has-focus-visible:opacity-100 has-data-popup-open:pointer-events-auto has-data-popup-open:opacity-100">
+      <div className="pointer-events-none flex min-w-10 justify-end gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 has-focus-visible:pointer-events-auto has-focus-visible:opacity-100 has-data-popup-open:pointer-events-auto has-data-popup-open:opacity-100">
         {!profile.isActive && (
           <Tooltip>
             <TooltipTrigger render={<span className="inline-flex" />}>
-              <Button size="icon" type="button" onClick={onSwitch} disabled={isBusy}>
+              <Button
+                size="icon"
+                type="button"
+                aria-label={`切换 ${profile.alias}`}
+                onClick={onSwitch}
+                disabled={
+                  isBusy ||
+                  (profile.product === 'grok' &&
+                    profile.accountType === 'relay' &&
+                    !modelProfileName)
+                }
+              >
                 {isBusy ? <LoaderCircle className="animate-spin" /> : <ArrowLeftRight />}
                 <span className="sr-only">切换</span>
               </Button>
             </TooltipTrigger>
-            <TooltipContent>切换</TooltipContent>
+            <TooltipContent>
+              {profile.product === 'grok' && profile.accountType === 'relay' && !modelProfileName
+                ? '请先关联模型方案'
+                : '切换'}
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {profile.isActive && profile.product === 'grok' && profile.accountType === 'relay' && (
+          <Tooltip>
+            <TooltipTrigger render={<span className="inline-flex" />}>
+              <Button
+                variant="outline"
+                size="icon"
+                type="button"
+                aria-label={`取消 ${profile.alias}`}
+                onClick={() => onEnabledChange(false)}
+                disabled={isBusy}
+              >
+                {isBusy ? <LoaderCircle className="animate-spin" /> : <X />}
+                <span className="sr-only">取消</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>取消</TooltipContent>
           </Tooltip>
         )}
         <DropdownMenu>
@@ -190,11 +233,13 @@ export function AccountBalance({
   const windows = [profile.usagePrimary, profile.usageSecondary].filter(
     (window): window is UsageWindow => Boolean(window),
   );
+  const balanceTitle =
+    [...new Set(windows.map((window) => usageWindowLabel(window.windowMinutes)))].join(' / ') ||
+    '剩余额度';
   return (
     <div className="min-w-0 flex-1">
       <div className="mb-3 flex items-center gap-2">
-        <strong className="text-sm font-medium">剩余额度</strong>
-        {profile.planType && <Badge variant="outline">{planLabel(profile.planType)}</Badge>}
+        <strong className="text-sm font-medium">{balanceTitle}</strong>
         <Tooltip>
           <TooltipTrigger render={<span className="ml-auto inline-flex" />}>
             <Button
@@ -212,6 +257,7 @@ export function AccountBalance({
         </Tooltip>
       </div>
       <UsageProgressList
+        valueFirst
         items={windows.map((window, index) => ({
           key: String(window.windowMinutes ?? index),
           label: window.resetsAt ? formatResetTime(window.resetsAt) : '剩余额度',
@@ -231,6 +277,7 @@ export function AccountBalance({
 export function UsageProgressList({
   items,
   emptyText = '额度未查询',
+  valueFirst = false,
 }: {
   items: {
     key: string;
@@ -239,6 +286,7 @@ export function UsageProgressList({
     resetsAt: number | null;
   }[];
   emptyText?: string;
+  valueFirst?: boolean;
 }) {
   return items.length ? (
     <div className="flex flex-col gap-3">
@@ -246,17 +294,23 @@ export function UsageProgressList({
         <Progress
           key={item.key}
           value={item.remainingPercent}
-          className={
-            item.remainingPercent <= 10
-              ? 'gap-1.5 [&_[data-slot=progress-indicator]]:bg-destructive'
-              : 'gap-1.5'
-          }
+          className={cn(
+            'gap-1.5',
+            item.remainingPercent <= 10 && '[&_[data-slot=progress-indicator]]:bg-destructive',
+            valueFirst && '[&_[data-slot=progress-track]]:order-first',
+          )}
         >
-          <ProgressLabel>
+          <ProgressLabel
+            className={cn(
+              valueFirst && 'order-2 ml-auto font-normal text-muted-foreground tabular-nums',
+            )}
+          >
             {item.label}
             {item.resetsAt ? ` · ${formatResetTime(item.resetsAt)}` : ''}
           </ProgressLabel>
-          <ProgressValue />
+          <ProgressValue className={cn(valueFirst && 'order-1 ml-0')}>
+            {valueFirst ? (formattedValue) => `${formattedValue}剩余` : undefined}
+          </ProgressValue>
         </Progress>
       ))}
     </div>

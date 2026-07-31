@@ -15,6 +15,15 @@ import {
 import { Field, FieldGroup, FieldLabel } from '../../components/ui/field';
 import { Input } from '../../components/ui/input';
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../components/ui/select';
+import { Switch } from '../../components/ui/switch';
+import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
@@ -24,6 +33,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/ta
 import { Textarea } from '../../components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import type { AccountProduct, AddMode, PendingConfirm, Profile } from './types';
+import { type ModelProfilesStatus, uniqueModelsById } from '../models/types';
 
 type Setter<T> = (value: T | ((current: T) => T)) => void;
 
@@ -36,6 +46,10 @@ export function AddAccountDialog({
   relayApiKey,
   relayApiBaseUrl,
   showRelayApiKey,
+  modelStatus,
+  customModelEnabled,
+  modelProfileId,
+  defaultModelId,
   oauthMessage,
   oauthUrl,
   callbackUrl,
@@ -45,6 +59,9 @@ export function AddAccountDialog({
   setRelayApiKey,
   setRelayApiBaseUrl,
   setShowRelayApiKey,
+  setCustomModelEnabled,
+  setModelProfileId,
+  setDefaultModelId,
   setCallbackUrl,
   onGenerateOAuth,
   onOpenOAuth,
@@ -59,6 +76,10 @@ export function AddAccountDialog({
   relayApiKey: string;
   relayApiBaseUrl: string;
   showRelayApiKey: boolean;
+  modelStatus: ModelProfilesStatus | null;
+  customModelEnabled: boolean;
+  modelProfileId: string | null;
+  defaultModelId: string | null;
   oauthMessage: string | null;
   oauthUrl: string;
   callbackUrl: string;
@@ -68,6 +89,9 @@ export function AddAccountDialog({
   setRelayApiKey: Setter<string>;
   setRelayApiBaseUrl: Setter<string>;
   setShowRelayApiKey: Setter<boolean>;
+  setCustomModelEnabled: Setter<boolean>;
+  setModelProfileId: Setter<string | null>;
+  setDefaultModelId: Setter<string | null>;
   setCallbackUrl: Setter<string>;
   onGenerateOAuth: () => Promise<void>;
   onOpenOAuth: () => void;
@@ -76,38 +100,6 @@ export function AddAccountDialog({
 }) {
   const oauthSaving = busy === 'oauth' || busy?.startsWith('oauth:');
   const saving = oauthSaving || busy === 'auth-json' || busy === 'relay' || busy === 'import';
-  if (product === 'grok') {
-    return (
-      <AppDialog title="添加账号" onClose={onClose}>
-        <form className="flex flex-col gap-4" onSubmit={onSubmit}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="new-alias">别名</FieldLabel>
-              <Input
-                id="new-alias"
-                value={alias}
-                onChange={(event) => setAlias(event.target.value)}
-                placeholder="例如：工作账户"
-              />
-            </Field>
-            {oauthMessage && (
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                {busy === 'oauth' && <LoaderCircle size={15} className="animate-spin" />}{' '}
-                {oauthMessage}
-              </p>
-            )}
-          </FieldGroup>
-          <DialogFooter>
-            <CancelButton />
-            <Button type="submit" disabled={saving}>
-              {saving && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
-              在浏览器中授权
-            </Button>
-          </DialogFooter>
-        </form>
-      </AppDialog>
-    );
-  }
   if (product === 'antigravity') {
     return (
       <AppDialog title="添加账号" contentClassName="sm:max-w-xl" onClose={onClose}>
@@ -227,6 +219,23 @@ export function AddAccountDialog({
                   required
                 />
               </Field>
+              {(product === 'codex' || product === 'claude' || product === 'grok') && (
+                <ModelProfileFields
+                  status={modelStatus}
+                  enabled={customModelEnabled}
+                  profileId={modelProfileId}
+                  defaultModelId={defaultModelId}
+                  onEnabledChange={setCustomModelEnabled}
+                  onProfileChange={(value) => {
+                    setModelProfileId(value);
+                    setDefaultModelId(
+                      modelStatus?.profiles.find((profile) => profile.id === value)?.models[0]
+                        ?.id ?? null,
+                    );
+                  }}
+                  onDefaultModelChange={setDefaultModelId}
+                />
+              )}
             </TabsContent>
             <TabsContent value="browser" className="empty:hidden">
               <BrowserOAuthFields
@@ -237,18 +246,21 @@ export function AddAccountDialog({
                 setCallbackUrl={setCallbackUrl}
                 onGenerate={onGenerateOAuth}
                 onOpen={onOpenOAuth}
+                showCallback={product !== 'grok'}
               />
             </TabsContent>
           </FieldGroup>
           <DialogFooter>
             <CancelButton disabled={busy === 'auth-json' || busy === 'relay'} />
-            <Button
-              type="submit"
-              disabled={saving || (addMode === 'browser' && !callbackUrl.trim())}
-            >
-              {saving && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
-              确认
-            </Button>
+            {!(product === 'grok' && addMode === 'browser') && (
+              <Button
+                type="submit"
+                disabled={saving || (addMode === 'browser' && !callbackUrl.trim())}
+              >
+                {saving && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
+                确认
+              </Button>
+            )}
           </DialogFooter>
         </Tabs>
       </form>
@@ -264,6 +276,7 @@ function BrowserOAuthFields({
   setCallbackUrl,
   onGenerate,
   onOpen,
+  showCallback = true,
 }: {
   busy: string | null;
   oauthMessage: string | null;
@@ -272,6 +285,7 @@ function BrowserOAuthFields({
   setCallbackUrl: Setter<string>;
   onGenerate: () => Promise<void>;
   onOpen: () => void;
+  showCallback?: boolean;
 }) {
   const loading = busy === 'oauth:prepare';
   const completing = busy === 'oauth:complete';
@@ -302,25 +316,27 @@ function BrowserOAuthFields({
                   disabled={loading || completing}
                 />
                 <RefreshButton
-                  label="重新生成授权链接"
+                  label="重新生成授权链接并打开"
                   onRefresh={onGenerate}
                   disabled={loading || completing}
                 />
               </InputGroupAddon>
             </InputGroup>
           </Field>
-          <Field>
-            <FieldLabel htmlFor="oauth-callback-url">回调链接</FieldLabel>
-            <Input
-              id="oauth-callback-url"
-              value={callbackUrl}
-              onChange={(event) => setCallbackUrl(event.target.value)}
-              placeholder="粘贴浏览器最终跳转的链接"
-              autoComplete="off"
-              spellCheck={false}
-              disabled={completing}
-            />
-          </Field>
+          {showCallback && (
+            <Field>
+              <FieldLabel htmlFor="oauth-callback-url">回调链接</FieldLabel>
+              <Input
+                id="oauth-callback-url"
+                value={callbackUrl}
+                onChange={(event) => setCallbackUrl(event.target.value)}
+                placeholder="粘贴浏览器最终跳转的链接"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={completing}
+              />
+            </Field>
+          )}
         </>
       ) : (
         <Button
@@ -331,7 +347,7 @@ function BrowserOAuthFields({
           disabled={loading}
         >
           {loading && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
-          生成授权链接
+          生成授权链接并打开
         </Button>
       )}
       {oauthMessage && (
@@ -381,11 +397,18 @@ export function EditAccountDialog({
   relayApiKey,
   relayApiBaseUrl,
   showRelayApiKey,
+  modelStatus,
+  customModelEnabled,
+  modelProfileId,
+  defaultModelId,
   setAlias,
   setAuthJson,
   setRelayApiKey,
   setRelayApiBaseUrl,
   setShowRelayApiKey,
+  setCustomModelEnabled,
+  setModelProfileId,
+  setDefaultModelId,
   onSubmit,
   onClose,
 }: {
@@ -396,11 +419,18 @@ export function EditAccountDialog({
   relayApiKey: string;
   relayApiBaseUrl: string;
   showRelayApiKey: boolean;
+  modelStatus: ModelProfilesStatus | null;
+  customModelEnabled: boolean;
+  modelProfileId: string | null;
+  defaultModelId: string | null;
   setAlias: Setter<string>;
   setAuthJson: Setter<string>;
   setRelayApiKey: Setter<string>;
   setRelayApiBaseUrl: Setter<string>;
   setShowRelayApiKey: Setter<boolean>;
+  setCustomModelEnabled: Setter<boolean>;
+  setModelProfileId: Setter<string | null>;
+  setDefaultModelId: Setter<string | null>;
   onSubmit: (event: FormEvent) => void;
   onClose: () => void;
 }) {
@@ -448,8 +478,27 @@ export function EditAccountDialog({
                   required
                 />
               </Field>
+              {(editing.product === 'codex' ||
+                editing.product === 'claude' ||
+                editing.product === 'grok') && (
+                <ModelProfileFields
+                  status={modelStatus}
+                  enabled={customModelEnabled}
+                  profileId={modelProfileId}
+                  defaultModelId={defaultModelId}
+                  onEnabledChange={setCustomModelEnabled}
+                  onProfileChange={(value) => {
+                    setModelProfileId(value);
+                    setDefaultModelId(
+                      modelStatus?.profiles.find((profile) => profile.id === value)?.models[0]
+                        ?.id ?? null,
+                    );
+                  }}
+                  onDefaultModelChange={setDefaultModelId}
+                />
+              )}
             </>
-          ) : (
+          ) : editing.product === 'codex' || editing.product === 'grok' ? (
             <Field>
               <FieldLabel htmlFor="editing-auth-json">auth.json</FieldLabel>
               <Textarea
@@ -462,7 +511,7 @@ export function EditAccountDialog({
                 required
               />
             </Field>
-          )}
+          ) : null}
         </FieldGroup>
         <DialogFooter>
           <CancelButton />
@@ -500,10 +549,18 @@ export function ConfirmAccountDialog({
               ? confirm.profile.accountType === 'relay'
                 ? `将移除“${confirm.profile.alias}”的本地认证档案，并从 settings.json 清除当前 Claude 中转站凭据。`
                 : `将移除“${confirm.profile.alias}”的本地认证档案，并从 settings.json 清除当前 Claude OAuth Token。Keychain 登录保持不变。`
-              : confirm.profile.isActive
-                ? `将移除“${confirm.profile.alias}”的本地认证档案。当前 ${product} 登录保持不变，但不再由本应用管理。`
-                : `将移除“${confirm.profile.alias}”的本地认证档案。`
-            : `当前 ${product} 登录或 API 配置在应用外被修改。继续会立即切换到“${confirm.profile.alias}”。`}
+              : confirm.profile.product === 'grok' &&
+                  confirm.profile.accountType === 'relay' &&
+                  confirm.profile.isActive
+                ? `将停用并移除“${confirm.profile.alias}”，同时重建 Grok 中转模型配置。`
+                : confirm.profile.isActive
+                  ? `将移除“${confirm.profile.alias}”的本地认证档案。当前 ${product} 登录保持不变，但不再由本应用管理。`
+                  : `将移除“${confirm.profile.alias}”的本地认证档案。`
+            : confirm.kind === 'force-grok-relay'
+              ? `当前 Grok 登录、API 或模型配置在应用外被修改。继续会覆盖托管配置并${confirm.enabled ? '启用' : '停用'}“${confirm.profile.alias}”。`
+              : confirm.kind === 'force-grok-edit'
+                ? `当前 Grok API 或模型配置在应用外被修改。继续会保存“${confirm.profile.alias}”并覆盖托管配置。`
+                : `当前 ${product} 登录、API 或模型配置在应用外被修改。继续会立即切换到“${confirm.profile.alias}”。`}
         </p>
         <DialogFooter>
           <CancelButton disabled={busy} />
@@ -514,11 +571,98 @@ export function ConfirmAccountDialog({
             disabled={busy}
           >
             {busy && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
-            {confirm.kind === 'delete' ? '移除' : '仍要切换'}
+            {confirm.kind === 'delete'
+              ? '移除'
+              : confirm.kind === 'force-grok-relay' || confirm.kind === 'force-grok-edit'
+                ? '确认覆盖'
+                : '仍要切换'}
           </Button>
         </DialogFooter>
       </div>
     </AppDialog>
+  );
+}
+
+function ModelProfileFields({
+  status,
+  enabled,
+  profileId,
+  defaultModelId,
+  onEnabledChange,
+  onProfileChange,
+  onDefaultModelChange,
+}: {
+  status: ModelProfilesStatus | null;
+  enabled: boolean;
+  profileId: string | null;
+  defaultModelId: string | null;
+  onEnabledChange: Setter<boolean>;
+  onProfileChange: (value: string) => void;
+  onDefaultModelChange: Setter<string | null>;
+}) {
+  const profiles = status?.profiles.filter((item) => item.models.length) ?? [];
+  const profile = profiles.find((item) => item.id === profileId);
+  const modelOptions = uniqueModelsById(profile?.models ?? []);
+  return (
+    <div className="flex flex-col gap-3 rounded-md border p-3">
+      <label className="flex items-center justify-between gap-3 text-sm font-medium">
+        自定义模型
+        <Switch
+          checked={enabled}
+          onCheckedChange={(checked) => {
+            onEnabledChange(checked);
+            if (checked && !profileId) {
+              const first = profiles[0];
+              onProfileChange(first?.id ?? '');
+            }
+          }}
+          disabled={!profiles.length}
+        />
+      </label>
+      {!profiles.length && (
+        <p className="text-xs text-muted-foreground">暂无可用模型方案，请先在模型管理中创建。</p>
+      )}
+      {enabled && profiles.length ? (
+        <div className="grid grid-cols-2 gap-3">
+          <Field>
+            <FieldLabel>模型方案</FieldLabel>
+            <Select value={profileId} onValueChange={(value) => value && onProfileChange(value)}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="选择方案">{profile?.name}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {profiles.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          {profile ? (
+            <Field>
+              <FieldLabel>默认模型</FieldLabel>
+              <Select value={defaultModelId} onValueChange={onDefaultModelChange}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="选择默认模型" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {modelOptions.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

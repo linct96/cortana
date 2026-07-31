@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { invoke, listenOAuthProgress } from '../../backend';
 import { appError } from '../../utils';
+import type { ModelProfilesStatus } from '../models/types';
 import { resetCreditOutcomeNotice } from './types';
 import type {
   AddMode,
@@ -27,6 +28,10 @@ export function useAccountManager(product: AccountProduct) {
   const [relayApiKey, setRelayApiKey] = useState('');
   const [relayApiBaseUrl, setRelayApiBaseUrl] = useState('');
   const [showRelayApiKey, setShowRelayApiKey] = useState(false);
+  const [modelStatus, setModelStatus] = useState<ModelProfilesStatus | null>(null);
+  const [customModelEnabled, setCustomModelEnabled] = useState(false);
+  const [modelProfileId, setModelProfileId] = useState<string | null>(null);
+  const [defaultModelId, setDefaultModelId] = useState<string | null>(null);
   const [oauthMessage, setOauthMessage] = useState<string | null>(null);
   const [oauthUrl, setOauthUrl] = useState('');
   const [callbackUrl, setCallbackUrl] = useState('');
@@ -58,6 +63,18 @@ export function useAccountManager(product: AccountProduct) {
     [product],
   );
 
+  const refreshModels = useCallback(async () => {
+    if (product !== 'codex' && product !== 'claude' && product !== 'grok') {
+      setModelStatus(null);
+      return;
+    }
+    try {
+      setModelStatus(await invoke<ModelProfilesStatus>('get_model_profiles_status', { product }));
+    } catch (error) {
+      toast.error(appError(error));
+    }
+  }, [product]);
+
   const refreshNewAccount = useCallback(
     async (profile: Profile) => {
       try {
@@ -68,8 +85,9 @@ export function useAccountManager(product: AccountProduct) {
         toast.error(`账号已添加，但信息刷新失败：${appError(error)}`);
       }
       await refresh();
+      await refreshModels();
     },
-    [product, refresh],
+    [product, refresh, refreshModels],
   );
 
   useEffect(() => {
@@ -79,6 +97,7 @@ export function useAccountManager(product: AccountProduct) {
     setAddMode('browser');
     setQuotaProfileId(null);
     void refresh();
+    void refreshModels();
     const statusTimer =
       product === 'codex' ? window.setInterval(() => void refresh(false), 10_000) : undefined;
     if (product === 'codex') {
@@ -90,7 +109,7 @@ export function useAccountManager(product: AccountProduct) {
       if (statusTimer !== undefined) window.clearInterval(statusTimer);
       refreshRequestRef.current += 1;
     };
-  }, [product, refresh]);
+  }, [product, refresh, refreshModels]);
 
   const stopOAuthProgress = useCallback(() => {
     oauthCleanupRef.current?.();
@@ -140,6 +159,9 @@ export function useAccountManager(product: AccountProduct) {
     setRelayApiKey('');
     setRelayApiBaseUrl('');
     setShowRelayApiKey(false);
+    setCustomModelEnabled(false);
+    setModelProfileId(null);
+    setDefaultModelId(null);
     setOauthMessage(null);
     setOauthUrl('');
     setCallbackUrl('');
@@ -152,6 +174,9 @@ export function useAccountManager(product: AccountProduct) {
     setEditingRelayApiKey('');
     setEditingRelayApiBaseUrl('');
     setShowEditingRelayApiKey(false);
+    setCustomModelEnabled(false);
+    setModelProfileId(null);
+    setDefaultModelId(null);
   }
 
   async function cancelOAuth() {
@@ -292,7 +317,9 @@ export function useAccountManager(product: AccountProduct) {
           ? `已切换到 ${profile.alias}，新启动的 agy 会话生效。`
           : product === 'claude'
             ? `已切换到 ${profile.alias}，新启动的 claude 会话生效。`
-            : `已切换到 ${profile.alias}。`,
+            : product === 'grok'
+              ? `已切换到 ${profile.alias}，新启动的 Grok 会话生效。`
+              : `已切换到 ${profile.alias}，模型配置将在新启动的 Codex 会话生效。`,
       );
       setConfirm(null);
       await refresh();
@@ -300,6 +327,29 @@ export function useAccountManager(product: AccountProduct) {
       const message = appError(error);
       if (!force && message.includes('工具外')) setConfirm({ kind: 'force-switch', profile });
       else toast.error(message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function setGrokRelayEnabled(profile: Profile, enabled: boolean, force = false) {
+    setBusy(`relay:${profile.id}`);
+    try {
+      const next = await invoke<AppStatus>('set_grok_relay_enabled', {
+        profileId: profile.id,
+        enabled,
+        force,
+      });
+      setStatus(next);
+      setConfirm(null);
+      toast.success(`${profile.alias} 已${enabled ? '启用' : '停用'}。`);
+    } catch (error) {
+      const message = appError(error);
+      if (!force && message.includes('工具外')) {
+        setConfirm({ kind: 'force-grok-relay', profile, enabled });
+      } else {
+        toast.error(message);
+      }
     } finally {
       setBusy(null);
     }
@@ -332,17 +382,17 @@ export function useAccountManager(product: AccountProduct) {
 
   async function generateOAuthLink() {
     setBusy('oauth:prepare');
-    setOauthMessage('正在生成授权链接。');
+    setOauthMessage('正在生成授权链接并打开。');
     setCallbackUrl('');
     try {
       await startOAuthProgress();
-      const authorizationUrl = await invoke<string | null>('start_oauth_add', {
+      const authorizationUrl = await invoke<string>('start_oauth_add', {
         product,
         alias: alias || null,
         activate: false,
       });
-      if (!authorizationUrl) throw new Error('未能生成授权链接。');
       setOauthUrl(authorizationUrl);
+      await openOAuthLink(authorizationUrl);
     } catch (error) {
       stopOAuthProgress();
       toast.error(appError(error));
@@ -351,10 +401,10 @@ export function useAccountManager(product: AccountProduct) {
     }
   }
 
-  async function openOAuthLink() {
-    if (!oauthUrl) return;
+  async function openOAuthLink(authorizationUrl = oauthUrl) {
+    if (!authorizationUrl) return;
     try {
-      await invoke('open_oauth_add', { authorizationUrl: oauthUrl });
+      await invoke('open_oauth_add', { authorizationUrl });
     } catch (error) {
       toast.error(appError(error));
     }
@@ -367,19 +417,6 @@ export function useAccountManager(product: AccountProduct) {
 
   async function submitAdd(event: FormEvent) {
     event.preventDefault();
-    if (product === 'grok') {
-      setBusy('oauth');
-      setOauthMessage('正在准备浏览器授权。');
-      try {
-        await startOAuthProgress();
-        await invoke('start_oauth_add', { product, alias: alias || null, activate: false });
-      } catch (error) {
-        stopOAuthProgress();
-        setBusy(null);
-        toast.error(appError(error));
-      }
-      return;
-    }
     if (addMode === 'browser') {
       if (!callbackUrl.trim()) return;
       setBusy('oauth:complete');
@@ -423,6 +460,8 @@ export function useAccountManager(product: AccountProduct) {
               alias: alias || null,
               activate: false,
               product,
+              modelProfileId: customModelEnabled ? modelProfileId : null,
+              defaultModelId: customModelEnabled ? defaultModelId : null,
             });
       closeAddDialog();
       toast.success(`已添加 ${profile.alias}。`);
@@ -436,20 +475,52 @@ export function useAccountManager(product: AccountProduct) {
 
   async function openEditor(profile: Profile) {
     if (profile.accountType === 'relay') {
-      setEditing(profile);
-      setEditingAlias(profile.alias);
-      setEditingRelayApiKey('');
-      setEditingRelayApiBaseUrl(profile.apiBaseUrl ?? '');
+      setBusy(`edit:${profile.id}`);
+      let availableModelStatus = modelStatus;
+      try {
+        const apiKey = await invoke<string>('get_relay_api_key', {
+          profileId: profile.id,
+          product,
+        });
+        if (
+          (product === 'codex' || product === 'claude' || product === 'grok') &&
+          !availableModelStatus
+        ) {
+          availableModelStatus = await invoke<ModelProfilesStatus>('get_model_profiles_status', {
+            product,
+          });
+          setModelStatus(availableModelStatus);
+        }
+        setEditing(profile);
+        setEditingAlias(profile.alias);
+        setEditingRelayApiKey(apiKey);
+        setEditingRelayApiBaseUrl(profile.apiBaseUrl ?? '');
+        const assignedProfile = availableModelStatus?.profiles.find((modelProfile) =>
+          modelProfile.assignments.some((assignment) => assignment.accountId === profile.id),
+        );
+        const assignment = assignedProfile?.assignments.find(
+          (item) => item.accountId === profile.id,
+        );
+        setCustomModelEnabled(Boolean(assignedProfile));
+        setModelProfileId(assignedProfile?.id ?? null);
+        setDefaultModelId(assignment?.defaultModelId ?? null);
+      } catch (error) {
+        toast.error(appError(error));
+      } finally {
+        setBusy(null);
+      }
       return;
     }
-    if (product !== 'codex') {
+    if (product !== 'codex' && product !== 'grok') {
       setEditing(profile);
       setEditingAlias(profile.alias);
       return;
     }
     setBusy(`edit:${profile.id}`);
     try {
-      setEditingAuthJson(await invoke<string>('get_profile_auth', { profileId: profile.id }));
+      setEditingAuthJson(
+        await invoke<string>('get_profile_auth', { profileId: profile.id, product }),
+      );
       setEditing(profile);
       setEditingAlias(profile.alias);
     } catch (error) {
@@ -459,8 +530,8 @@ export function useAccountManager(product: AccountProduct) {
     }
   }
 
-  async function saveProfile(event: FormEvent) {
-    event.preventDefault();
+  async function saveProfile(event?: FormEvent, force = false) {
+    event?.preventDefault();
     if (!editing) return;
     setBusy(`edit:${editing.id}`);
     try {
@@ -473,19 +544,29 @@ export function useAccountManager(product: AccountProduct) {
               apiKey: editingRelayApiKey.trim() || null,
               apiBaseUrl: editingRelayApiBaseUrl,
               product,
+              modelProfileId: customModelEnabled ? modelProfileId : null,
+              defaultModelId: customModelEnabled ? defaultModelId : null,
+              force,
             }
           : {
               product,
               profileId: editing.id,
               alias: editingAlias,
-              ...(product === 'codex' ? { authJson: editingAuthJson } : {}),
+              ...(product === 'codex' || product === 'grok' ? { authJson: editingAuthJson } : {}),
             },
       );
       closeEditor();
+      setConfirm(null);
       toast.success('账户信息已保存。');
       await refresh();
+      await refreshModels();
     } catch (error) {
-      toast.error(appError(error));
+      const message = appError(error);
+      if (!force && product === 'grok' && message.includes('工具外')) {
+        setConfirm({ kind: 'force-grok-edit', profile: editing });
+      } else {
+        toast.error(message);
+      }
     } finally {
       setBusy(null);
     }
@@ -531,6 +612,10 @@ export function useAccountManager(product: AccountProduct) {
     relayApiKey,
     relayApiBaseUrl,
     showRelayApiKey,
+    modelStatus,
+    customModelEnabled,
+    modelProfileId,
+    defaultModelId,
     oauthMessage,
     oauthUrl,
     callbackUrl,
@@ -552,6 +637,9 @@ export function useAccountManager(product: AccountProduct) {
     setRelayApiKey,
     setRelayApiBaseUrl,
     setShowRelayApiKey,
+    setCustomModelEnabled,
+    setModelProfileId,
+    setDefaultModelId,
     setCallbackUrl,
     setEditingAlias,
     setEditingAuthJson,
@@ -570,6 +658,7 @@ export function useAccountManager(product: AccountProduct) {
     viewResetCredits,
     consumeResetCredit,
     switchTo,
+    setGrokRelayEnabled,
     openCli,
     importCurrent,
     generateOAuthLink,

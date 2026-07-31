@@ -19,7 +19,7 @@ export function formatResetTime(value: number, now = Date.now()) {
   const hours = Math.floor((totalMinutes % 1_440) / 60);
   const minutes = totalMinutes % 60;
 
-  if (days) return `重置于${days}天${hours}时`;
-  if (hours) return `重置于${hours}时${minutes}分`;
-  return `重置于${minutes}分`;
+  if (days) return `${days}d ${hours}h 后重置`;
+  if (hours) return `${hours}h ${minutes}m 后重置`;
+  return `${minutes}m 后重置`;
 }

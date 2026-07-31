@@ -10,7 +10,7 @@ export function BackendGate({ children }: { children: ReactNode }) {
   const connect = useCallback(async () => {
     setState('loading');
     try {
-      await invoke('get_app_status');
+      await invoke('get_app_status', { product: 'codex' });
       setState('ready');
     } catch (error) {
       setState(error instanceof Error ? error.message : String(error));
