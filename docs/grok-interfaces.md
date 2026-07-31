@@ -2,7 +2,7 @@
 
 本文记录 Cortana 当前使用的 xAI OAuth、用户信息和 Grok Build 额度接口。内容以
 [Grok CLI 官方说明](https://docs.x.ai/build/cli/reference)及
-[grok-build 官方源码](https://github.com/xai-org/grok-build)为准，最后核对日期为 2026-07-22。
+[grok-build 官方源码](https://github.com/xai-org/grok-build)为准，最后核对日期为 2026-07-30。
 
 其中 OAuth discovery 遵循标准 OIDC；`cli-chat-proxy.grok.com` 下的用户和额度端点由
 xAI 官方 CLI 使用，但不是公开稳定的开发者 API，升级前需要使用真实账号重新验证。
@@ -139,28 +139,58 @@ Cortana 当前使用：
 | `creditUsagePercent` | 已使用额度百分比，界面显示 `100 - creditUsagePercent` |
 | `currentPeriod.start/end` | 计算额度周期并显示重置时间 |
 | `subscriptionTier` | 套餐名称；缺失时保留本地已有值 |
-| `monthlyLimit/used` | 兼容旧版响应，计算已用百分比 |
-| `billingPeriodStart/End` | 兼容旧版周期字段 |
 
 `creditUsagePercent` 可能缺失。免费额度没有公开的精确剩余量，Proto3 的零值字段也可能被
 省略，因此项目不会把缺失值解释成 `0%` 或 `100%`，而是显示“官方未返回额度百分比”。
 请求成功后仍会记录更新时间；达到限制时，模型请求可能返回 `402` 或 `429`。
 
+## 中转站账号
+
+Grok Build 使用 OpenAI 兼容中转站时，Cortana 写入以下配置：
+
+```toml
+[auth]
+preferred_method = "api_key"
+
+[models]
+default = "cortana-1234abcd-0"
+
+[model.cortana-1234abcd-0]
+model = "relay-model"
+name = "Relay Model"
+description = "由工作中转提供"
+base_url = "https://relay.example.com/v1"
+api_key = "<中转站 API Key>"
+api_backend = "chat_completions"
+```
+
+中转地址和 API Key 分别写入每个 `[model.*]` 的 `base_url`、`api_key`，不会配置
+`[endpoints].models_base_url`。第一期仅支持 `/models` 和 Chat Completions；不支持
+Responses、Anthropic Messages、自定义请求头和查询参数。
+
+未关联自定义模型方案时不能启用中转账号。多个中转账号可同时启用，Cortana 会为每个账号
+分别写入其地址、API Key 和完整模型方案，并使用
+`cortana-<账号 ID 前 8 位>-<序号>` 命名空间。启用顺序保存在 SQLite 设置
+`grok_enabled_relay_profile_ids` 中；短 ID 冲突时拒绝写入。用户手工维护的非
+`cortana-*` 模型条目保持不变。
+
 ## 本地凭据
 
-Grok CLI 默认读取 `$GROK_HOME/auth.json`，未设置时使用 `~/.grok/auth.json`。Cortana 只管理
-注册键：
+Grok CLI 默认读取 `$GROK_HOME/auth.json`，未设置时使用 `~/.grok/auth.json`。Cortana 仅管理
+官方 OAuth 注册键：
 
 ```text
 https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828
 ```
 
 额度查询直接使用数据库中该账号的 OAuth 凭据，不切换账号、不启动或解析 Grok CLI
-子进程。令牌刷新后，活动账号会同步回 `auth.json`；其他 API Key、企业 OIDC 等条目保持不变。
+子进程。中转站 API Key 不参与官方额度查询，也不会写入 `auth.json`；启用首个中转账号时会
+移除整个 `auth.json`。切换到 OAuth 账号会停用全部中转账号，活动 OAuth 凭据会同步回
+`auth.json`，其他未知 scope 保持不变。
 
 ## 安全约束
 
 - 文档、日志和错误信息不得输出完整 token、Device Code 或 refresh token。
 - 授权地址必须使用 HTTPS；轮询必须支持取消、过期和拒绝。
-- `auth.json` 与 SQLite 数据库包含可用凭据，不得提交到仓库。
+- `auth.json`、活动中转账号的 `config.toml` 与 SQLite 数据库包含可用凭据，不得提交到仓库。
 - 私有接口失败时不得更新额度时间戳，响应字段缺失时不得伪造额度值。
