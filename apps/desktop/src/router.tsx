@@ -14,6 +14,15 @@ const AnalyticsPage = lazyRouteComponent(() => import('./features/analytics/anal
 const BillingPage = lazyRouteComponent(() => import('./features/billing/billing-page'));
 const ConfigPage = lazyRouteComponent(() => import('./features/config/config-page'));
 const PromptsPage = lazyRouteComponent(() => import('./features/prompts/prompts-page'));
+const ModelsPage = lazyRouteComponent(() => import('./features/models/models-page'));
+const NewModelPage = lazyRouteComponent(
+  () => import('./features/models/model-editor-page'),
+  'NewModelPage',
+);
+const EditModelPage = lazyRouteComponent(
+  () => import('./features/models/model-editor-page'),
+  'EditModelPage',
+);
 const NewPromptPage = lazyRouteComponent(
   () => import('./features/prompts/prompt-editor-page'),
   'NewPromptPage',
@@ -103,6 +112,24 @@ const editPromptRoute = createRoute({
   component: EditPromptPage,
 });
 
+const modelsRoute = createRoute({
+  getParentRoute: () => mainLayoutRoute,
+  path: '/models',
+  component: ModelsPage,
+});
+
+const newModelRoute = createRoute({
+  getParentRoute: () => mainLayoutRoute,
+  path: '/models/new',
+  component: NewModelPage,
+});
+
+const editModelRoute = createRoute({
+  getParentRoute: () => mainLayoutRoute,
+  path: '/models/edit/$profileId',
+  component: EditModelPage,
+});
+
 const sessionsRoute = createRoute({
   getParentRoute: () => mainLayoutRoute,
   path: '/sessions',
@@ -125,6 +152,9 @@ export const router = createRouter({
       promptsRoute,
       newPromptRoute,
       editPromptRoute,
+      modelsRoute,
+      newModelRoute,
+      editModelRoute,
       configRoute,
     ]),
     settingsRoute.addChildren([generalSettingsRoute, billingRoute, aboutRoute]),

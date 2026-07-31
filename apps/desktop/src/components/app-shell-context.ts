@@ -1,6 +1,12 @@
 import { createContext, type Dispatch, type SetStateAction, useContext } from 'react';
 
-export type MainPath = '/accounts' | '/sessions' | '/analytics' | '/prompts' | '/config';
+export type MainPath =
+  | '/accounts'
+  | '/sessions'
+  | '/analytics'
+  | '/prompts'
+  | '/models'
+  | '/config';
 export type AccountProduct = 'codex' | 'claude' | 'antigravity' | 'grok';
 
 export type AppShellContextValue = {

@@ -7,6 +7,7 @@ import {
   FileCog,
   FileText,
   MessagesSquare,
+  Boxes,
   RefreshCw,
   Settings,
   TriangleAlert,
@@ -80,7 +81,7 @@ export function AppShell() {
 }
 
 export function MainLayout() {
-  const { topPadding } = useAppShell();
+  const { topPadding, activeProduct } = useAppShell();
 
   return (
     <>
@@ -94,6 +95,11 @@ export function MainLayout() {
             <SidebarNavItem to="/analytics" label="统计分析" icon={ChartNoAxesCombined} />
             <SidebarNavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
             <SidebarNavItem to="/prompts" label="提示词管理" icon={FileText} />
+            {(activeProduct === 'codex' ||
+              activeProduct === 'claude' ||
+              activeProduct === 'grok') && (
+              <SidebarNavItem to="/models" label="自定义模型" icon={Boxes} />
+            )}
             <SidebarNavItem to="/config" label="配置" icon={FileCog} />
           </>
         }
@@ -273,11 +279,13 @@ function CliAlert({
 
 function mainPathFor(pathname: string): MainPath | null {
   if (pathname.startsWith('/prompts/')) return '/prompts';
+  if (pathname.startsWith('/models/')) return '/models';
   if (
     pathname === '/accounts' ||
     pathname === '/sessions' ||
     pathname === '/analytics' ||
     pathname === '/prompts' ||
+    pathname === '/models' ||
     pathname === '/config'
   ) {
     return pathname;
