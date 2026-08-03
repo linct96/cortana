@@ -1,4 +1,4 @@
-use super::{dispatch_command, DEFAULT_WEB_PORT};
+use super::{dispatch_command, DEVELOPMENT_WEB_PORT};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -73,7 +73,7 @@ pub(super) fn start_server(app: tauri::AppHandle, port: u16) -> Result<RunningSe
 
 pub(super) fn effective_web_port(port: u16) -> u16 {
     if cfg!(debug_assertions) {
-        DEFAULT_WEB_PORT
+        DEVELOPMENT_WEB_PORT
     } else {
         port
     }

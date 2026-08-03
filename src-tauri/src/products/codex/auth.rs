@@ -9,6 +9,7 @@ use crate::{
             resolve_auth_state,
         },
         environment,
+        gateway::{self, UpstreamProtocol},
     },
     platform::{
         db::{database_error, open_database},
@@ -63,15 +64,16 @@ pub(crate) fn open_codex_cli_with_profile_internal(
     profile_id: &str,
 ) -> Result<(), String> {
     let connection = open_database(state)?;
-    let (account_type, api_base_url, auth_json) = connection
+    let (account_type, api_base_url, auth_json, upstream_protocol) = connection
         .query_row(
-            "SELECT account_type, api_base_url, auth_json FROM accounts WHERE id = ?1 AND product = 'codex'",
+            "SELECT account_type, api_base_url, auth_json, upstream_protocol FROM accounts WHERE id = ?1 AND product = 'codex'",
             params![profile_id],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
                 ))
             },
         )
@@ -79,7 +81,14 @@ pub(crate) fn open_codex_cli_with_profile_internal(
         .map_err(database_error)?
         .ok_or_else(|| "Codex 账户不存在。".to_string())?;
 
-    let (environment, arguments) = if account_type == ACCOUNT_TYPE_OAUTH {
+    let gateway_enabled = gateway::is_enabled(&connection)?;
+    let (environment, arguments) = if gateway_enabled {
+        gateway::ensure_available()?;
+        codex_relay_cli_options(
+            gateway::ensure_local_api_key(&connection)?,
+            &gateway::base_url(),
+        )
+    } else if account_type == ACCOUNT_TYPE_OAUTH {
         let auth = ensure_fresh_codex_auth(state, profile_id, None)?;
         (
             vec![(
@@ -95,6 +104,10 @@ pub(crate) fn open_codex_cli_with_profile_internal(
         let api_base_url = api_base_url.ok_or_else(|| "中转站账户缺少 API 地址。".to_string())?;
         let api_key =
             extract_api_key(&auth_json)?.ok_or_else(|| "中转站账户缺少 API Key。".to_string())?;
+        let protocol = UpstreamProtocol::parse(&upstream_protocol)?;
+        if protocol.requires_gateway() {
+            return Err("该账号协议需要先启用网关模式。".to_string());
+        }
         codex_relay_cli_options(api_key, &api_base_url)
     } else {
         return Err("不支持该 Codex 账户类型。".to_string());
@@ -196,7 +209,7 @@ pub(crate) fn ensure_fresh_codex_auth(
             &connection,
             profile_id,
             &auth_json,
-            active_id.as_deref() == Some(profile_id),
+            active_id.as_deref() == Some(profile_id) && !gateway::is_enabled(&connection)?,
         )?;
     }
     Ok(CodexAuth {
@@ -292,20 +305,27 @@ pub(crate) fn codex_relay_cli_options(
     api_key: String,
     api_base_url: &str,
 ) -> (Vec<(String, String)>, Vec<String>) {
+    let mut arguments = vec![
+        "-c".to_string(),
+        codex_cli_config_override("model_provider", "cortana_relay"),
+        "-c".to_string(),
+        codex_cli_config_override("model_providers.cortana_relay.name", "Cortana"),
+        "-c".to_string(),
+        codex_cli_config_override("model_providers.cortana_relay.base_url", api_base_url),
+        "-c".to_string(),
+        codex_cli_config_override(
+            "model_providers.cortana_relay.env_key",
+            CODEX_RELAY_API_KEY_ENV,
+        ),
+    ];
+    if gateway::is_base_url(api_base_url) {
+        arguments.extend([
+            "-c".to_string(),
+            codex_cli_config_override("model_providers.cortana_relay.wire_api", "responses"),
+        ]);
+    }
     (
         vec![(CODEX_RELAY_API_KEY_ENV.to_string(), api_key)],
-        vec![
-            "-c".to_string(),
-            codex_cli_config_override("model_provider", "cortana_relay"),
-            "-c".to_string(),
-            codex_cli_config_override("model_providers.cortana_relay.name", "Cortana"),
-            "-c".to_string(),
-            codex_cli_config_override("model_providers.cortana_relay.base_url", api_base_url),
-            "-c".to_string(),
-            codex_cli_config_override(
-                "model_providers.cortana_relay.env_key",
-                CODEX_RELAY_API_KEY_ENV,
-            ),
-        ],
+        arguments,
     )
 }

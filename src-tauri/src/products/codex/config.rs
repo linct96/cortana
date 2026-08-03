@@ -1,5 +1,8 @@
 use crate::{
-    features::models,
+    features::{
+        gateway::{self, UpstreamProtocol},
+        models,
+    },
     platform::{
         config as platform_config,
         db::{get_setting, open_database},
@@ -102,11 +105,16 @@ pub(crate) fn update_provider_config_content(
         document["model_providers"][CORTANA_MODEL_PROVIDER]["base_url"] = toml_value(api_base_url);
         document["model_providers"][CORTANA_MODEL_PROVIDER]["experimental_bearer_token"] =
             toml_value(api_key);
+        let translated = gateway::is_base_url(api_base_url);
         if let Some(provider) =
             document["model_providers"][CORTANA_MODEL_PROVIDER].as_table_like_mut()
         {
             provider.remove("requires_openai_auth");
-            provider.remove("wire_api");
+            if translated {
+                provider.insert("wire_api", toml_value("responses"));
+            } else {
+                provider.remove("wire_api");
+            }
         }
     } else {
         document["forced_login_method"] = toml_value("chatgpt");
@@ -219,6 +227,7 @@ pub(crate) fn apply_profile_files_with_model(
     api_base_url: Option<&str>,
     model_profile_id: Option<&str>,
     default_model_id: Option<&str>,
+    upstream_protocol: UpstreamProtocol,
 ) -> Result<ProfileFilesBackup, String> {
     let auth_path = auth_path(state)?;
     let config_path = codex_config_path(state)?;
@@ -229,8 +238,13 @@ pub(crate) fn apply_profile_files_with_model(
         api_base_url,
         auth_json,
     )?;
-    let (next_config, catalog) =
-        models::apply_model_config(state, &provider_config, model_profile_id, default_model_id)?;
+    let (next_config, catalog) = models::apply_model_config(
+        state,
+        &provider_config,
+        model_profile_id,
+        default_model_id,
+        upstream_protocol.requires_gateway(),
+    )?;
     let previous_catalog = read_optional_file(&catalog.0)?;
     let backup = ProfileFilesBackup {
         auth_json: read_optional_file(&auth_path)?,
@@ -243,6 +257,72 @@ pub(crate) fn apply_profile_files_with_model(
         return Err(error);
     }
     if let Err(error) = apply_auth_file(&auth_path, auth_json, account_type) {
+        restore_optional_file(&config_path, backup.config.as_deref())?;
+        restore_catalog(&backup)?;
+        return Err(error);
+    }
+    Ok(backup)
+}
+
+pub(crate) fn apply_gateway_profile_files_with_model(
+    state: &AppState,
+    local_api_key: &str,
+    model_profile_id: Option<&str>,
+    default_model_id: Option<&str>,
+    upstream_protocol: UpstreamProtocol,
+) -> Result<ProfileFilesBackup, String> {
+    let auth_json = build_relay_auth_json(local_api_key)?;
+    apply_profile_files_with_model(
+        state,
+        &auth_json,
+        ACCOUNT_TYPE_RELAY,
+        Some(&gateway::base_url()),
+        model_profile_id,
+        default_model_id,
+        upstream_protocol,
+    )
+}
+
+pub(crate) fn clear_managed_profile_files(state: &AppState) -> Result<ProfileFilesBackup, String> {
+    let auth_path = auth_path(state)?;
+    let config_path = codex_config_path(state)?;
+    let previous_config = read_optional_file(&config_path)?;
+    let mut document = previous_config
+        .as_deref()
+        .unwrap_or_default()
+        .parse::<DocumentMut>()
+        .map_err(|error| format!("config.toml 格式错误：{error}"))?;
+    document.as_table_mut().remove("forced_login_method");
+    if document
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        == Some(CORTANA_MODEL_PROVIDER)
+    {
+        document.as_table_mut().remove("model_provider");
+    }
+    let remove_providers = document
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .is_some_and(|providers| {
+            providers.remove(CORTANA_MODEL_PROVIDER);
+            providers.is_empty()
+        });
+    if remove_providers {
+        document.as_table_mut().remove("model_providers");
+    }
+    let (next_config, catalog) =
+        models::apply_model_config(state, &document.to_string(), None, None, false)?;
+    let backup = ProfileFilesBackup {
+        auth_json: read_optional_file(&auth_path)?,
+        config: previous_config,
+        catalog: Some((catalog.0.clone(), read_optional_file(&catalog.0)?)),
+    };
+    restore_optional_file(&catalog.0, None)?;
+    if let Err(error) = write_file_atomically(&config_path, &next_config) {
+        restore_catalog(&backup)?;
+        return Err(error);
+    }
+    if let Err(error) = restore_optional_file(&auth_path, None) {
         restore_optional_file(&config_path, backup.config.as_deref())?;
         restore_catalog(&backup)?;
         return Err(error);

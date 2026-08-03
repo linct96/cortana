@@ -55,6 +55,9 @@ pub(crate) fn initialize_database(state: &AppState) -> Result<(), String> {
               reset_credits_available_count INTEGER,
               model_profile_id TEXT,
               default_model_id TEXT,
+              upstream_protocol TEXT NOT NULL DEFAULT 'openaiResponses',
+              upstream_auth_mode TEXT NOT NULL DEFAULT 'bearer',
+              anthropic_max_tokens INTEGER NOT NULL DEFAULT 16384,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL,
               last_used_at INTEGER,
@@ -87,6 +90,7 @@ pub(crate) fn initialize_database(state: &AppState) -> Result<(), String> {
             ",
         )
         .map_err(database_error)?;
+    migrate_account_gateway_schema(&connection)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -94,6 +98,50 @@ pub(crate) fn initialize_database(state: &AppState) -> Result<(), String> {
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn migrate_account_gateway_schema(connection: &Connection) -> Result<(), String> {
+    for (name, definition) in [
+        (
+            "upstream_protocol",
+            "TEXT NOT NULL DEFAULT 'openaiResponses'",
+        ),
+        ("upstream_auth_mode", "TEXT NOT NULL DEFAULT 'bearer'"),
+        ("anthropic_max_tokens", "INTEGER NOT NULL DEFAULT 16384"),
+    ] {
+        if !account_column_exists(connection, name)? {
+            connection
+                .execute_batch(&format!(
+                    "ALTER TABLE accounts ADD COLUMN {name} {definition}"
+                ))
+                .map_err(database_error)?;
+        }
+    }
+    connection
+        .execute_batch(
+            "
+            DROP INDEX IF EXISTS accounts_relay_identity_uq;
+            CREATE UNIQUE INDEX accounts_relay_identity_uq
+              ON accounts(product, api_base_url, account_id, upstream_protocol, upstream_auth_mode)
+              WHERE account_type = 'relay' AND api_base_url IS NOT NULL AND account_id <> '';
+            ",
+        )
+        .map_err(database_error)
+}
+
+fn account_column_exists(connection: &Connection, name: &str) -> Result<bool, String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(accounts)")
+        .map_err(database_error)?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(database_error)?;
+    for column in columns {
+        if column.map_err(database_error)? == name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(crate) fn credential_fingerprint(secret: &str) -> String {
@@ -190,7 +238,9 @@ pub(crate) fn set_web_access_settings(
 
 #[cfg(test)]
 mod tests {
-    use super::{get_setting, set_web_access_settings};
+    use super::{
+        account_column_exists, get_setting, migrate_account_gateway_schema, set_web_access_settings,
+    };
     use rusqlite::Connection;
 
     #[test]
@@ -210,5 +260,59 @@ mod tests {
             get_setting(&connection, "web_access_port").unwrap(),
             Some("11456".to_string())
         );
+    }
+
+    #[test]
+    fn migrates_gateway_columns_and_rebuilds_relay_identity_idempotently() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE accounts (
+                  id TEXT PRIMARY KEY NOT NULL,
+                  product TEXT NOT NULL,
+                  account_type TEXT NOT NULL,
+                  api_base_url TEXT,
+                  account_id TEXT NOT NULL DEFAULT ''
+                );
+                CREATE UNIQUE INDEX accounts_relay_identity_uq
+                  ON accounts(product, api_base_url, account_id)
+                  WHERE account_type = 'relay' AND api_base_url IS NOT NULL AND account_id <> '';
+                INSERT INTO accounts (id, product, account_type, api_base_url, account_id)
+                  VALUES ('old', 'codex', 'relay', 'https://example.com/v1', 'token:1');
+                ",
+            )
+            .unwrap();
+
+        migrate_account_gateway_schema(&connection).unwrap();
+        migrate_account_gateway_schema(&connection).unwrap();
+
+        assert!(account_column_exists(&connection, "upstream_protocol").unwrap());
+        assert!(account_column_exists(&connection, "upstream_auth_mode").unwrap());
+        assert!(account_column_exists(&connection, "anthropic_max_tokens").unwrap());
+        let defaults: (String, String, i64) = connection
+            .query_row(
+                "SELECT upstream_protocol, upstream_auth_mode, anthropic_max_tokens FROM accounts WHERE id = 'old'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            defaults,
+            ("openaiResponses".into(), "bearer".into(), 16_384)
+        );
+
+        connection
+            .execute(
+                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, upstream_protocol, upstream_auth_mode) VALUES ('chat', 'codex', 'relay', 'https://example.com/v1', 'token:1', 'openaiChatCompletions', 'bearer')",
+                [],
+            )
+            .unwrap();
+        assert!(connection
+            .execute(
+                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, upstream_protocol, upstream_auth_mode) VALUES ('duplicate', 'codex', 'relay', 'https://example.com/v1', 'token:1', 'openaiChatCompletions', 'bearer')",
+                [],
+            )
+            .is_err());
     }
 }

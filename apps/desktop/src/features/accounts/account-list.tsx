@@ -366,6 +366,17 @@ function AccountMeta({ profile, onViewQuota }: { profile: Profile; onViewQuota: 
   const items: { key: string; label: string; destructive?: boolean }[] = [];
   if (profile.accountType === 'relay') {
     if (profile.apiBaseUrl) items.push({ key: 'api', label: profile.apiBaseUrl });
+    if (profile.product === 'codex') {
+      items.push({
+        key: 'protocol',
+        label:
+          profile.upstreamProtocol === 'openaiResponses'
+            ? 'Responses'
+            : profile.upstreamProtocol === 'openaiChatCompletions'
+              ? 'Chat Completions'
+              : 'Anthropic Messages',
+      });
+    }
   } else if (profile.product === 'claude') {
     if (profile.email) {
       items.push({ key: 'email', label: profile.email });

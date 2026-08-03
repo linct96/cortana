@@ -18,6 +18,7 @@ pub(crate) fn apply_model_config(
     content: &str,
     profile_id: Option<&str>,
     default_model_id: Option<&str>,
+    translated_protocol: bool,
 ) -> Result<(String, (PathBuf, Option<String>)), String> {
     let mut document = if content.trim().is_empty() {
         DocumentMut::new()
@@ -55,7 +56,7 @@ pub(crate) fn apply_model_config(
     if !models.iter().any(|model| model.id == default_model_id) {
         return Err("账号默认模型不在关联方案中。".to_string());
     }
-    let catalog = generate_catalog(&template, &models, default_model_id)?;
+    let catalog = generate_catalog(&template, &models, default_model_id, translated_protocol)?;
     let catalog_config_path = if codex_home == state.default_codex_home {
         DEFAULT_CATALOG_CONFIG_PATH.to_string()
     } else {
@@ -94,6 +95,7 @@ pub(super) fn generate_catalog(
     bundled: &Value,
     models: &[ModelEntry],
     default_model_id: &str,
+    translated_protocol: bool,
 ) -> Result<String, String> {
     let bundled_models = bundled
         .get("models")
@@ -144,6 +146,20 @@ pub(super) fn generate_catalog(
             if model.context_1m {
                 object.insert("context_window".to_string(), json!(1_048_576));
                 object.insert("max_context_window".to_string(), json!(1_048_576));
+            }
+            if translated_protocol {
+                object.insert("default_reasoning_level".to_string(), Value::Null);
+                object.insert("supported_reasoning_levels".to_string(), json!([]));
+                object.insert(
+                    "supports_reasoning_summary_parameter".to_string(),
+                    json!(false),
+                );
+                object.insert("support_verbosity".to_string(), json!(false));
+                object.insert("default_verbosity".to_string(), Value::Null);
+                object.insert("additional_speed_tiers".to_string(), json!([]));
+                object.insert("service_tiers".to_string(), json!([]));
+                object.remove("default_service_tier");
+                object.insert("supports_search_tool".to_string(), json!(false));
             }
             value
         })

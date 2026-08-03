@@ -1,10 +1,11 @@
 use super::store::{
     get_profile_auth_json, get_profile_summary, list_profiles, list_profiles_for_product,
-    relay_api_key_for_profile, resolve_auth_state, switch_profile_internal,
-    update_profile_internal, update_relay_profile_internal, upsert_profile_from_auth,
-    upsert_relay_profile,
+    relay_api_key_for_profile, resolve_auth_state, set_gateway_mode_internal,
+    switch_profile_internal, update_profile_internal, update_relay_profile_internal,
+    upsert_profile_from_auth, upsert_relay_profile,
 };
 use crate::{
+    features::gateway::{self, UpstreamAuthMode, UpstreamProtocol, DEFAULT_ANTHROPIC_MAX_TOKENS},
     platform::{
         db::{self, initialize_database, open_database},
         files::write_file_atomically,
@@ -386,6 +387,9 @@ fn switches_between_relay_and_oauth_files_and_deduplicates_relays() {
         "relay-key",
         "https://relay.example.com/v1/",
         "Relay",
+        UpstreamProtocol::OpenAiResponses,
+        UpstreamAuthMode::Bearer,
+        DEFAULT_ANTHROPIC_MAX_TOKENS,
     )
     .unwrap();
     let connection = open_database(&state).unwrap();
@@ -399,10 +403,21 @@ fn switches_between_relay_and_oauth_files_and_deduplicates_relays() {
         "relay-key",
         "https://relay.example.com/v1",
         "Renamed",
+        UpstreamProtocol::OpenAiResponses,
+        UpstreamAuthMode::Bearer,
+        DEFAULT_ANTHROPIC_MAX_TOKENS,
     )
     .unwrap();
-    let other =
-        upsert_relay_profile(&state, "relay-key", "https://other.example.com/v1", "Other").unwrap();
+    let other = upsert_relay_profile(
+        &state,
+        "relay-key",
+        "https://other.example.com/v1",
+        "Other",
+        UpstreamProtocol::OpenAiResponses,
+        UpstreamAuthMode::Bearer,
+        DEFAULT_ANTHROPIC_MAX_TOKENS,
+    )
+    .unwrap();
     assert_eq!(relay.id, duplicate.id);
     assert_ne!(relay.id, other.id);
 
@@ -467,8 +482,16 @@ fn updates_active_relay_model_config_immediately() {
         pending_oauth: Arc::new(Mutex::new(None)),
     };
     initialize_database(&state).unwrap();
-    let relay =
-        upsert_relay_profile(&state, "relay-key", "https://relay.example.com/v1", "Relay").unwrap();
+    let relay = upsert_relay_profile(
+        &state,
+        "relay-key",
+        "https://relay.example.com/v1",
+        "Relay",
+        UpstreamProtocol::OpenAiResponses,
+        UpstreamAuthMode::Bearer,
+        DEFAULT_ANTHROPIC_MAX_TOKENS,
+    )
+    .unwrap();
     switch_profile_internal(&state, &relay.id, true).unwrap();
     let connection = open_database(&state).unwrap();
     connection
@@ -488,6 +511,9 @@ fn updates_active_relay_model_config_immediately() {
         "https://relay.example.com/v1",
         Some("custom"),
         Some("custom-model"),
+        UpstreamProtocol::OpenAiResponses,
+        UpstreamAuthMode::Bearer,
+        DEFAULT_ANTHROPIC_MAX_TOKENS,
     )
     .unwrap();
 
@@ -512,5 +538,58 @@ fn updates_active_relay_model_config_immediately() {
         ("custom".to_string(), "custom-model".to_string())
     );
     drop(connection);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn gateway_mode_uses_fixed_local_credentials_and_clears_only_managed_config() {
+    let directory = std::env::temp_dir().join(format!("codex-gateway-test-{}", Uuid::new_v4()));
+    fs::create_dir_all(&directory).unwrap();
+    let state = AppState {
+        database_path: directory.join("app.sqlite3"),
+        default_codex_home: directory.clone(),
+        pending_oauth: Arc::new(Mutex::new(None)),
+    };
+    initialize_database(&state).unwrap();
+    save_codex_config_internal(
+        &state,
+        "# keep\n[model_providers.foreign]\nname = \"Foreign\"\nbase_url = \"https://foreign.example/v1\"\n",
+    )
+    .unwrap();
+    let relay = upsert_relay_profile(
+        &state,
+        "upstream-secret",
+        "https://relay.example/v1",
+        "Chat Relay",
+        UpstreamProtocol::OpenAiChatCompletions,
+        UpstreamAuthMode::Bearer,
+        DEFAULT_ANTHROPIC_MAX_TOKENS,
+    )
+    .unwrap();
+    gateway::mark_available_for_test();
+
+    let status = set_gateway_mode_internal(&state, true, Some(&relay.id)).unwrap();
+    assert!(status.enabled);
+    assert_eq!(status.active_profile_id.as_deref(), Some(relay.id.as_str()));
+    let connection = open_database(&state).unwrap();
+    let local_key = gateway::local_api_key(&connection).unwrap().unwrap();
+    drop(connection);
+    assert!(local_key.starts_with("cortana-gw-"));
+    assert_ne!(local_key, "upstream-secret");
+    let config = fs::read_to_string(directory.join("config.toml")).unwrap();
+    assert!(config.contains(&format!("base_url = \"{}\"", gateway::base_url())));
+    assert!(config.contains(&format!("experimental_bearer_token = \"{local_key}\"")));
+    assert!(config.contains("wire_api = \"responses\""));
+    assert!(config.contains("[model_providers.foreign]"));
+
+    let status = set_gateway_mode_internal(&state, false, None).unwrap();
+    assert!(!status.enabled);
+    assert!(status.active_profile_id.is_none());
+    let config = fs::read_to_string(directory.join("config.toml")).unwrap();
+    assert!(config.contains("# keep"));
+    assert!(config.contains("[model_providers.foreign]"));
+    assert!(!config.contains("[model_providers.cortana]"));
+    assert!(!config.contains("forced_login_method"));
+    assert!(!directory.join("auth.json").exists());
     fs::remove_dir_all(directory).unwrap();
 }

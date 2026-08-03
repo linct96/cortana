@@ -8,7 +8,10 @@ use super::{
     types::{ClaudeModelSlot, ModelAssignment, ModelEntry},
 };
 use crate::{
-    features::accounts,
+    features::{
+        accounts,
+        gateway::{UpstreamAuthMode, UpstreamProtocol, DEFAULT_ANTHROPIC_MAX_TOKENS},
+    },
     platform::{
         db::{initialize_database, open_database},
         state::{AccountProduct, AppState},
@@ -115,6 +118,7 @@ fn generates_default_first_catalog_from_generic_template() {
             },
         ],
         "z-model",
+        false,
     )
     .unwrap();
     let catalog: Value = serde_json::from_str(&content).unwrap();
@@ -392,6 +396,9 @@ fn saves_shared_profile_with_per_account_defaults() {
         "first-key",
         "https://first.example.com/v1",
         "First",
+        UpstreamProtocol::OpenAiResponses,
+        UpstreamAuthMode::Bearer,
+        DEFAULT_ANTHROPIC_MAX_TOKENS,
     )
     .unwrap();
     let second = accounts::upsert_relay_profile(
@@ -399,6 +406,9 @@ fn saves_shared_profile_with_per_account_defaults() {
         "second-key",
         "https://second.example.com/v1",
         "Second",
+        UpstreamProtocol::OpenAiResponses,
+        UpstreamAuthMode::Bearer,
+        DEFAULT_ANTHROPIC_MAX_TOKENS,
     )
     .unwrap();
     let profile = save_model_profile(

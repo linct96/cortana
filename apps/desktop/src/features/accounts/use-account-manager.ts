@@ -9,16 +9,20 @@ import type {
   AddMode,
   AccountProduct,
   AppStatus,
+  CodexGatewayStatus,
   OAuthProgress,
   PendingConfirm,
   Profile,
   ResetCreditConsumeResult,
   ResetCredits,
+  UpstreamAuthMode,
+  UpstreamProtocol,
   UsageRefreshResult,
 } from './types';
 
 export function useAccountManager(product: AccountProduct) {
   const [status, setStatus] = useState<AppStatus | null>(null);
+  const [gatewayStatus, setGatewayStatus] = useState<CodexGatewayStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -27,6 +31,9 @@ export function useAccountManager(product: AccountProduct) {
   const [authJson, setAuthJson] = useState('');
   const [relayApiKey, setRelayApiKey] = useState('');
   const [relayApiBaseUrl, setRelayApiBaseUrl] = useState('');
+  const [upstreamProtocol, setUpstreamProtocol] = useState<UpstreamProtocol>('openaiResponses');
+  const [upstreamAuthMode, setUpstreamAuthMode] = useState<UpstreamAuthMode>('bearer');
+  const [anthropicMaxTokens, setAnthropicMaxTokens] = useState(16_384);
   const [showRelayApiKey, setShowRelayApiKey] = useState(false);
   const [modelStatus, setModelStatus] = useState<ModelProfilesStatus | null>(null);
   const [customModelEnabled, setCustomModelEnabled] = useState(false);
@@ -63,6 +70,18 @@ export function useAccountManager(product: AccountProduct) {
     [product],
   );
 
+  const refreshGateway = useCallback(async () => {
+    if (product !== 'codex') {
+      setGatewayStatus(null);
+      return;
+    }
+    try {
+      setGatewayStatus(await invoke<CodexGatewayStatus>('get_codex_gateway_mode'));
+    } catch (error) {
+      toast.error(appError(error));
+    }
+  }, [product]);
+
   const refreshModels = useCallback(async () => {
     if (product !== 'codex' && product !== 'claude' && product !== 'grok') {
       setModelStatus(null);
@@ -97,6 +116,7 @@ export function useAccountManager(product: AccountProduct) {
     setAddMode('browser');
     setQuotaProfileId(null);
     void refresh();
+    void refreshGateway();
     void refreshModels();
     const statusTimer =
       product === 'codex' ? window.setInterval(() => void refresh(false), 10_000) : undefined;
@@ -109,7 +129,7 @@ export function useAccountManager(product: AccountProduct) {
       if (statusTimer !== undefined) window.clearInterval(statusTimer);
       refreshRequestRef.current += 1;
     };
-  }, [product, refresh, refreshModels]);
+  }, [product, refresh, refreshGateway, refreshModels]);
 
   const stopOAuthProgress = useCallback(() => {
     oauthCleanupRef.current?.();
@@ -158,6 +178,9 @@ export function useAccountManager(product: AccountProduct) {
     setAuthJson('');
     setRelayApiKey('');
     setRelayApiBaseUrl('');
+    setUpstreamProtocol('openaiResponses');
+    setUpstreamAuthMode('bearer');
+    setAnthropicMaxTokens(16_384);
     setShowRelayApiKey(false);
     setCustomModelEnabled(false);
     setModelProfileId(null);
@@ -173,6 +196,9 @@ export function useAccountManager(product: AccountProduct) {
     setEditingAuthJson('');
     setEditingRelayApiKey('');
     setEditingRelayApiBaseUrl('');
+    setUpstreamProtocol('openaiResponses');
+    setUpstreamAuthMode('bearer');
+    setAnthropicMaxTokens(16_384);
     setShowEditingRelayApiKey(false);
     setCustomModelEnabled(false);
     setModelProfileId(null);
@@ -309,6 +335,15 @@ export function useAccountManager(product: AccountProduct) {
   }
 
   async function switchTo(profile: Profile, force = false) {
+    if (
+      !force &&
+      product === 'codex' &&
+      !gatewayStatus?.enabled &&
+      profile.upstreamProtocol !== 'openaiResponses'
+    ) {
+      setConfirm({ kind: 'enable-gateway', profile, action: 'switch' });
+      return;
+    }
     setBusy(`switch:${profile.id}`);
     try {
       await invoke<Profile>('switch_profile', { product, profileId: profile.id, force });
@@ -356,10 +391,56 @@ export function useAccountManager(product: AccountProduct) {
   }
 
   async function openCli(profile: Profile) {
+    if (!gatewayStatus?.enabled && profile.upstreamProtocol !== 'openaiResponses') {
+      setConfirm({ kind: 'enable-gateway', profile, action: 'open-cli' });
+      return;
+    }
     setBusy(`open-cli:${profile.id}`);
     try {
       await invoke('open_codex_cli_with_profile', { profileId: profile.id });
       toast.success(`已使用 ${profile.alias} 打开 Codex CLI。`);
+    } catch (error) {
+      toast.error(appError(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function setGatewayMode(enabled: boolean) {
+    setBusy('gateway');
+    try {
+      const next = await invoke<CodexGatewayStatus>('set_codex_gateway_mode', {
+        enabled,
+        profileId: null,
+      });
+      setGatewayStatus(next);
+      toast.success(`网关模式已${enabled ? '开启' : '关闭'}。`);
+      await refresh();
+    } catch (error) {
+      toast.error(appError(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function enableGatewayAndUse() {
+    if (confirm?.kind !== 'enable-gateway') return;
+    const { profile, action } = confirm;
+    setBusy(`gateway:${profile.id}`);
+    try {
+      const next = await invoke<CodexGatewayStatus>('set_codex_gateway_mode', {
+        enabled: true,
+        profileId: profile.id,
+      });
+      setGatewayStatus(next);
+      setConfirm(null);
+      await refresh();
+      if (action === 'open-cli') {
+        await invoke('open_codex_cli_with_profile', { profileId: profile.id });
+        toast.success(`已启用网关模式，并使用 ${profile.alias} 打开 Codex CLI。`);
+      } else {
+        toast.success(`已启用网关模式并切换到 ${profile.alias}。`);
+      }
     } catch (error) {
       toast.error(appError(error));
     } finally {
@@ -462,6 +543,9 @@ export function useAccountManager(product: AccountProduct) {
               product,
               modelProfileId: customModelEnabled ? modelProfileId : null,
               defaultModelId: customModelEnabled ? defaultModelId : null,
+              upstreamProtocol: product === 'codex' ? upstreamProtocol : null,
+              upstreamAuthMode: product === 'codex' ? upstreamAuthMode : null,
+              anthropicMaxTokens: product === 'codex' ? anthropicMaxTokens : null,
             });
       closeAddDialog();
       toast.success(`已添加 ${profile.alias}。`);
@@ -495,6 +579,9 @@ export function useAccountManager(product: AccountProduct) {
         setEditingAlias(profile.alias);
         setEditingRelayApiKey(apiKey);
         setEditingRelayApiBaseUrl(profile.apiBaseUrl ?? '');
+        setUpstreamProtocol(profile.upstreamProtocol);
+        setUpstreamAuthMode(profile.upstreamAuthMode);
+        setAnthropicMaxTokens(profile.anthropicMaxTokens);
         const assignedProfile = availableModelStatus?.profiles.find((modelProfile) =>
           modelProfile.assignments.some((assignment) => assignment.accountId === profile.id),
         );
@@ -546,6 +633,9 @@ export function useAccountManager(product: AccountProduct) {
               product,
               modelProfileId: customModelEnabled ? modelProfileId : null,
               defaultModelId: customModelEnabled ? defaultModelId : null,
+              upstreamProtocol: product === 'codex' ? upstreamProtocol : null,
+              upstreamAuthMode: product === 'codex' ? upstreamAuthMode : null,
+              anthropicMaxTokens: product === 'codex' ? anthropicMaxTokens : null,
               force,
             }
           : {
@@ -579,6 +669,7 @@ export function useAccountManager(product: AccountProduct) {
       setConfirm(null);
       toast.success(`已移除 ${profile.alias}。`);
       await refresh();
+      await refreshGateway();
     } catch (error) {
       toast.error(appError(error));
     } finally {
@@ -603,6 +694,7 @@ export function useAccountManager(product: AccountProduct) {
   return {
     product,
     status,
+    gatewayStatus,
     loading,
     busy,
     addOpen,
@@ -611,6 +703,9 @@ export function useAccountManager(product: AccountProduct) {
     authJson,
     relayApiKey,
     relayApiBaseUrl,
+    upstreamProtocol,
+    upstreamAuthMode,
+    anthropicMaxTokens,
     showRelayApiKey,
     modelStatus,
     customModelEnabled,
@@ -636,6 +731,9 @@ export function useAccountManager(product: AccountProduct) {
     setAuthJson,
     setRelayApiKey,
     setRelayApiBaseUrl,
+    setUpstreamProtocol,
+    setUpstreamAuthMode,
+    setAnthropicMaxTokens,
     setShowRelayApiKey,
     setCustomModelEnabled,
     setModelProfileId,
@@ -660,6 +758,8 @@ export function useAccountManager(product: AccountProduct) {
     switchTo,
     setGrokRelayEnabled,
     openCli,
+    setGatewayMode,
+    enableGatewayAndUse,
     importCurrent,
     generateOAuthLink,
     openOAuthLink,

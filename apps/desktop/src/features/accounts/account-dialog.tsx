@@ -32,7 +32,14 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Textarea } from '../../components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
-import type { AccountProduct, AddMode, PendingConfirm, Profile } from './types';
+import type {
+  AccountProduct,
+  AddMode,
+  PendingConfirm,
+  Profile,
+  UpstreamAuthMode,
+  UpstreamProtocol,
+} from './types';
 import { type ModelProfilesStatus, uniqueModelsById } from '../models/types';
 
 type Setter<T> = (value: T | ((current: T) => T)) => void;
@@ -45,6 +52,9 @@ export function AddAccountDialog({
   authJson,
   relayApiKey,
   relayApiBaseUrl,
+  upstreamProtocol,
+  upstreamAuthMode,
+  anthropicMaxTokens,
   showRelayApiKey,
   modelStatus,
   customModelEnabled,
@@ -58,6 +68,9 @@ export function AddAccountDialog({
   setAuthJson,
   setRelayApiKey,
   setRelayApiBaseUrl,
+  setUpstreamProtocol,
+  setUpstreamAuthMode,
+  setAnthropicMaxTokens,
   setShowRelayApiKey,
   setCustomModelEnabled,
   setModelProfileId,
@@ -75,6 +88,9 @@ export function AddAccountDialog({
   authJson: string;
   relayApiKey: string;
   relayApiBaseUrl: string;
+  upstreamProtocol: UpstreamProtocol;
+  upstreamAuthMode: UpstreamAuthMode;
+  anthropicMaxTokens: number;
   showRelayApiKey: boolean;
   modelStatus: ModelProfilesStatus | null;
   customModelEnabled: boolean;
@@ -88,6 +104,9 @@ export function AddAccountDialog({
   setAuthJson: Setter<string>;
   setRelayApiKey: Setter<string>;
   setRelayApiBaseUrl: Setter<string>;
+  setUpstreamProtocol: Setter<UpstreamProtocol>;
+  setUpstreamAuthMode: Setter<UpstreamAuthMode>;
+  setAnthropicMaxTokens: Setter<number>;
   setShowRelayApiKey: Setter<boolean>;
   setCustomModelEnabled: Setter<boolean>;
   setModelProfileId: Setter<string | null>;
@@ -219,6 +238,17 @@ export function AddAccountDialog({
                   required
                 />
               </Field>
+              {product === 'codex' && (
+                <GatewayFields
+                  idPrefix="new"
+                  protocol={upstreamProtocol}
+                  authMode={upstreamAuthMode}
+                  maxTokens={anthropicMaxTokens}
+                  onProtocolChange={setUpstreamProtocol}
+                  onAuthModeChange={setUpstreamAuthMode}
+                  onMaxTokensChange={setAnthropicMaxTokens}
+                />
+              )}
               {(product === 'codex' || product === 'claude' || product === 'grok') && (
                 <ModelProfileFields
                   status={modelStatus}
@@ -396,6 +426,9 @@ export function EditAccountDialog({
   authJson,
   relayApiKey,
   relayApiBaseUrl,
+  upstreamProtocol,
+  upstreamAuthMode,
+  anthropicMaxTokens,
   showRelayApiKey,
   modelStatus,
   customModelEnabled,
@@ -405,6 +438,9 @@ export function EditAccountDialog({
   setAuthJson,
   setRelayApiKey,
   setRelayApiBaseUrl,
+  setUpstreamProtocol,
+  setUpstreamAuthMode,
+  setAnthropicMaxTokens,
   setShowRelayApiKey,
   setCustomModelEnabled,
   setModelProfileId,
@@ -418,6 +454,9 @@ export function EditAccountDialog({
   authJson: string;
   relayApiKey: string;
   relayApiBaseUrl: string;
+  upstreamProtocol: UpstreamProtocol;
+  upstreamAuthMode: UpstreamAuthMode;
+  anthropicMaxTokens: number;
   showRelayApiKey: boolean;
   modelStatus: ModelProfilesStatus | null;
   customModelEnabled: boolean;
@@ -427,6 +466,9 @@ export function EditAccountDialog({
   setAuthJson: Setter<string>;
   setRelayApiKey: Setter<string>;
   setRelayApiBaseUrl: Setter<string>;
+  setUpstreamProtocol: Setter<UpstreamProtocol>;
+  setUpstreamAuthMode: Setter<UpstreamAuthMode>;
+  setAnthropicMaxTokens: Setter<number>;
   setShowRelayApiKey: Setter<boolean>;
   setCustomModelEnabled: Setter<boolean>;
   setModelProfileId: Setter<string | null>;
@@ -478,6 +520,17 @@ export function EditAccountDialog({
                   required
                 />
               </Field>
+              {editing.product === 'codex' && (
+                <GatewayFields
+                  idPrefix="editing"
+                  protocol={upstreamProtocol}
+                  authMode={upstreamAuthMode}
+                  maxTokens={anthropicMaxTokens}
+                  onProtocolChange={setUpstreamProtocol}
+                  onAuthModeChange={setUpstreamAuthMode}
+                  onMaxTokensChange={setAnthropicMaxTokens}
+                />
+              )}
               {(editing.product === 'codex' ||
                 editing.product === 'claude' ||
                 editing.product === 'grok') && (
@@ -525,6 +578,82 @@ export function EditAccountDialog({
   );
 }
 
+function GatewayFields({
+  idPrefix,
+  protocol,
+  authMode,
+  maxTokens,
+  onProtocolChange,
+  onAuthModeChange,
+  onMaxTokensChange,
+}: {
+  idPrefix: string;
+  protocol: UpstreamProtocol;
+  authMode: UpstreamAuthMode;
+  maxTokens: number;
+  onProtocolChange: Setter<UpstreamProtocol>;
+  onAuthModeChange: Setter<UpstreamAuthMode>;
+  onMaxTokensChange: Setter<number>;
+}) {
+  return (
+    <>
+      <Field>
+        <FieldLabel>API 协议</FieldLabel>
+        <Select
+          value={protocol}
+          onValueChange={(value) => value && onProtocolChange(value as UpstreamProtocol)}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue>
+              {protocol === 'openaiResponses'
+                ? 'OpenAI Responses'
+                : protocol === 'openaiChatCompletions'
+                  ? 'OpenAI Chat Completions'
+                  : 'Anthropic Messages'}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="openaiResponses">OpenAI Responses</SelectItem>
+            <SelectItem value="openaiChatCompletions">OpenAI Chat Completions</SelectItem>
+            <SelectItem value="anthropicMessages">Anthropic Messages</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      {protocol === 'anthropicMessages' && (
+        <>
+          <Field>
+            <FieldLabel>认证方式</FieldLabel>
+            <Select
+              value={authMode}
+              onValueChange={(value) => value && onAuthModeChange(value as UpstreamAuthMode)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue>{authMode === 'bearer' ? 'Bearer Token' : 'x-api-key'}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="bearer">Bearer Token</SelectItem>
+                <SelectItem value="xApiKey">x-api-key</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor={`${idPrefix}-anthropic-max-tokens`}>最大输出 Tokens</FieldLabel>
+            <Input
+              id={`${idPrefix}-anthropic-max-tokens`}
+              type="number"
+              min={1}
+              step={1}
+              value={maxTokens}
+              onChange={(event) => onMaxTokensChange(Number(event.target.value))}
+              required
+            />
+          </Field>
+        </>
+      )}
+    </>
+  );
+}
+
 export function ConfirmAccountDialog({
   confirm,
   busy,
@@ -539,28 +668,40 @@ export function ConfirmAccountDialog({
   const product = productName(confirm.profile.product);
   return (
     <AppDialog
-      title={confirm.kind === 'delete' ? '移除账户档案' : '覆盖当前登录状态'}
+      title={
+        confirm.kind === 'delete'
+          ? '移除账户档案'
+          : confirm.kind === 'enable-gateway'
+            ? '启用网关模式'
+            : '覆盖当前登录状态'
+      }
       onClose={() => !busy && onClose()}
     >
       <div>
         <p className="text-sm leading-6 text-muted-foreground">
-          {confirm.kind === 'delete'
-            ? confirm.profile.product === 'claude' && confirm.profile.isActive
-              ? confirm.profile.accountType === 'relay'
-                ? `将移除“${confirm.profile.alias}”的本地认证档案，并从 settings.json 清除当前 Claude 中转站凭据。`
-                : `将移除“${confirm.profile.alias}”的本地认证档案，并从 settings.json 清除当前 Claude OAuth Token。Keychain 登录保持不变。`
-              : confirm.profile.product === 'grok' &&
-                  confirm.profile.accountType === 'relay' &&
-                  confirm.profile.isActive
-                ? `将停用并移除“${confirm.profile.alias}”，同时重建 Grok 中转模型配置。`
-                : confirm.profile.isActive
-                  ? `将移除“${confirm.profile.alias}”的本地认证档案。当前 ${product} 登录保持不变，但不再由本应用管理。`
-                  : `将移除“${confirm.profile.alias}”的本地认证档案。`
-            : confirm.kind === 'force-grok-relay'
-              ? `当前 Grok 登录、API 或模型配置在应用外被修改。继续会覆盖托管配置并${confirm.enabled ? '启用' : '停用'}“${confirm.profile.alias}”。`
-              : confirm.kind === 'force-grok-edit'
-                ? `当前 Grok API 或模型配置在应用外被修改。继续会保存“${confirm.profile.alias}”并覆盖托管配置。`
-                : `当前 ${product} 登录、API 或模型配置在应用外被修改。继续会立即切换到“${confirm.profile.alias}”。`}
+          {confirm.kind === 'enable-gateway'
+            ? `“${confirm.profile.alias}”使用 ${
+                confirm.profile.upstreamProtocol === 'openaiChatCompletions'
+                  ? 'Chat Completions'
+                  : 'Anthropic Messages'
+              } 协议，需要先启用网关模式。确认后将自动启用并使用该账号。`
+            : confirm.kind === 'delete'
+              ? confirm.profile.product === 'claude' && confirm.profile.isActive
+                ? confirm.profile.accountType === 'relay'
+                  ? `将移除“${confirm.profile.alias}”的本地认证档案，并从 settings.json 清除当前 Claude 中转站凭据。`
+                  : `将移除“${confirm.profile.alias}”的本地认证档案，并从 settings.json 清除当前 Claude OAuth Token。Keychain 登录保持不变。`
+                : confirm.profile.product === 'grok' &&
+                    confirm.profile.accountType === 'relay' &&
+                    confirm.profile.isActive
+                  ? `将停用并移除“${confirm.profile.alias}”，同时重建 Grok 中转模型配置。`
+                  : confirm.profile.isActive
+                    ? `将移除“${confirm.profile.alias}”的本地认证档案。当前 ${product} 登录保持不变，但不再由本应用管理。`
+                    : `将移除“${confirm.profile.alias}”的本地认证档案。`
+              : confirm.kind === 'force-grok-relay'
+                ? `当前 Grok 登录、API 或模型配置在应用外被修改。继续会覆盖托管配置并${confirm.enabled ? '启用' : '停用'}“${confirm.profile.alias}”。`
+                : confirm.kind === 'force-grok-edit'
+                  ? `当前 Grok API 或模型配置在应用外被修改。继续会保存“${confirm.profile.alias}”并覆盖托管配置。`
+                  : `当前 ${product} 登录、API 或模型配置在应用外被修改。继续会立即切换到“${confirm.profile.alias}”。`}
         </p>
         <DialogFooter>
           <CancelButton disabled={busy} />
@@ -571,11 +712,13 @@ export function ConfirmAccountDialog({
             disabled={busy}
           >
             {busy && <LoaderCircle data-icon="inline-start" className="animate-spin" />}
-            {confirm.kind === 'delete'
-              ? '移除'
-              : confirm.kind === 'force-grok-relay' || confirm.kind === 'force-grok-edit'
-                ? '确认覆盖'
-                : '仍要切换'}
+            {confirm.kind === 'enable-gateway'
+              ? '启用并使用'
+              : confirm.kind === 'delete'
+                ? '移除'
+                : confirm.kind === 'force-grok-relay' || confirm.kind === 'force-grok-edit'
+                  ? '确认覆盖'
+                  : '仍要切换'}
           </Button>
         </DialogFooter>
       </div>

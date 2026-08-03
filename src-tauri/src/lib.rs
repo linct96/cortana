@@ -8,7 +8,7 @@ mod features;
 mod platform;
 mod products;
 
-use features::accounts;
+use features::{accounts, gateway};
 use platform::{db, local_web, state::AppState, tray};
 
 pub fn run() {
@@ -36,7 +36,9 @@ pub fn run() {
             };
             db::initialize_database(&state)?;
             accounts::start_usage_refresh_scheduler(state.clone());
-            app.manage(state);
+            app.manage(state.clone());
+
+            gateway::initialize(state)?;
 
             local_web::initialize(app.handle())?;
 

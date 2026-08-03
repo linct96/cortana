@@ -5,6 +5,9 @@ export type Profile = {
   product: AccountProduct;
   accountType: 'oauth' | 'relay';
   apiBaseUrl: string | null;
+  upstreamProtocol: UpstreamProtocol;
+  upstreamAuthMode: UpstreamAuthMode;
+  anthropicMaxTokens: number;
   accountId: string;
   email: string;
   alias: string;
@@ -19,6 +22,15 @@ export type Profile = {
   isActive: boolean;
   lastUsedAt: number | null;
   updatedAt: number;
+};
+
+export type UpstreamProtocol = 'openaiResponses' | 'openaiChatCompletions' | 'anthropicMessages';
+export type UpstreamAuthMode = 'bearer' | 'xApiKey';
+
+export type CodexGatewayStatus = {
+  enabled: boolean;
+  available: boolean;
+  activeProfileId: string | null;
 };
 
 export type { AccountProduct };
@@ -141,6 +153,7 @@ export type PendingConfirm =
   | { kind: 'force-switch' | 'delete'; profile: Profile }
   | { kind: 'force-grok-relay'; profile: Profile; enabled: boolean }
   | { kind: 'force-grok-edit'; profile: Profile }
+  | { kind: 'enable-gateway'; profile: Profile; action: 'switch' | 'open-cli' }
   | null;
 
 export type AddMode = 'browser' | 'paste' | 'relay';
