@@ -90,7 +90,11 @@ pub(crate) fn refresh_due_profile_usage_internal(
             Ok(_) => result.skipped_count += 1,
             Err(error) => {
                 result.failed_count += 1;
-                eprintln!("Unable to refresh Codex account {profile_id}: {error}");
+                let account = open_database(state)
+                    .and_then(|connection| get_profile_summary(&connection, &profile_id, None))
+                    .map(|profile| format!("{} <{}>", profile.alias, profile.email))
+                    .unwrap_or_else(|_| "未知账号".to_string());
+                eprintln!("Unable to refresh Codex account {account}: {error}");
             }
         }
     }
