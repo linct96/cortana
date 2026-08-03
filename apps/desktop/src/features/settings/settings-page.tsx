@@ -69,7 +69,7 @@ function SettingsContent() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [usageRefresh, setUsageRefresh] = useState<UsageRefreshSettings | null>(null);
   const [terminalApp, setTerminalApp] = useState<TerminalApp | null>(null);
-  const [webPort, setWebPort] = useState('11456');
+  const [webPort, setWebPort] = useState(import.meta.env.DEV ? '12456' : '11456');
   const [webPortError, setWebPortError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>('loading');
   const [loadError, setLoadError] = useState<string | null>(null);

@@ -1,6 +1,6 @@
 use super::types::{ClaudeModelSlot, ModelEntry, RelayModelOption, MAX_MODELS_RESPONSE_BYTES};
 use crate::{
-    features::accounts,
+    features::{accounts, gateway::UpstreamAuthMode},
     platform::{
         db::{database_error, open_database},
         state::{AccountProduct, AppState},
@@ -79,11 +79,11 @@ pub(super) fn fetch_relay_models_internal(
         return Err("该产品暂不支持中转站账户。".to_string());
     }
     let connection = open_database(state)?;
-    let api_base_url = connection
+    let (api_base_url, upstream_auth_mode) = connection
         .query_row(
-            "SELECT api_base_url FROM accounts WHERE id = ?1 AND product = ?2 AND account_type = 'relay'",
+            "SELECT api_base_url, upstream_auth_mode FROM accounts WHERE id = ?1 AND product = ?2 AND account_type = 'relay'",
             params![account_id, product.as_str()],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
         .map_err(database_error)?
@@ -95,12 +95,17 @@ pub(super) fn fetch_relay_models_internal(
         AccountProduct::Claude => format!("{base_url}/v1/models"),
         AccountProduct::Antigravity => unreachable!(),
     };
-    let mut response = Client::builder()
+    let client = Client::builder()
         .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|error| error.to_string())?
-        .get(url)
-        .bearer_auth(api_key)
+        .map_err(|error| error.to_string())?;
+    let request = client.get(url);
+    let request = match UpstreamAuthMode::parse(&upstream_auth_mode)? {
+        UpstreamAuthMode::Bearer => request.bearer_auth(api_key),
+        UpstreamAuthMode::XApiKey => request.header("x-api-key", api_key),
+    };
+    let mut response = request
         .send()
         .map_err(|error| format!("同步远端模型失败：{error}"))?;
     if !response.status().is_success() {

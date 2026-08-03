@@ -23,6 +23,7 @@ import {
   EmptyTitle,
 } from '../../components/ui/empty';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import { Switch } from '../../components/ui/switch';
 import { AddAccountDialog, ConfirmAccountDialog, EditAccountDialog } from './account-dialog';
 import { AccountBalance, AccountRow } from './account-list';
 import { AntigravityQuotaDialog } from './antigravity-quota-dialog';
@@ -53,6 +54,16 @@ function ProductAccountsPage({ product }: { product: AccountProduct }) {
         title="账号"
         actions={
           <>
+            {product === 'codex' && (
+              <label className="flex items-center gap-2 text-sm font-medium">
+                网关模式
+                <Switch
+                  checked={account.gatewayStatus?.enabled ?? false}
+                  onCheckedChange={(enabled) => void account.setGatewayMode(enabled)}
+                  disabled={account.busy === 'gateway' || !account.gatewayStatus}
+                />
+              </label>
+            )}
             <Tooltip>
               <TooltipTrigger render={<span className="inline-flex" />}>
                 <Button
@@ -279,6 +290,9 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           authJson={account.editingAuthJson}
           relayApiKey={account.editingRelayApiKey}
           relayApiBaseUrl={account.editingRelayApiBaseUrl}
+          upstreamProtocol={account.upstreamProtocol}
+          upstreamAuthMode={account.upstreamAuthMode}
+          anthropicMaxTokens={account.anthropicMaxTokens}
           showRelayApiKey={account.showEditingRelayApiKey}
           modelStatus={account.modelStatus}
           customModelEnabled={account.customModelEnabled}
@@ -288,6 +302,9 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           setAuthJson={account.setEditingAuthJson}
           setRelayApiKey={account.setEditingRelayApiKey}
           setRelayApiBaseUrl={account.setEditingRelayApiBaseUrl}
+          setUpstreamProtocol={account.setUpstreamProtocol}
+          setUpstreamAuthMode={account.setUpstreamAuthMode}
+          setAnthropicMaxTokens={account.setAnthropicMaxTokens}
           setShowRelayApiKey={account.setShowEditingRelayApiKey}
           setCustomModelEnabled={account.setCustomModelEnabled}
           setModelProfileId={account.setModelProfileId}
@@ -300,30 +317,34 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
         <ConfirmAccountDialog
           confirm={account.confirm}
           busy={
-            account.busy ===
-            `${
-              account.confirm.kind === 'delete'
-                ? 'delete'
-                : account.confirm.kind === 'force-grok-relay'
-                  ? 'relay'
-                  : account.confirm.kind === 'force-grok-edit'
-                    ? 'edit'
-                    : 'switch'
-            }:${account.confirm.profile.id}`
+            account.confirm.kind === 'enable-gateway'
+              ? account.busy === `gateway:${account.confirm.profile.id}`
+              : account.busy ===
+                `${
+                  account.confirm.kind === 'delete'
+                    ? 'delete'
+                    : account.confirm.kind === 'force-grok-relay'
+                      ? 'relay'
+                      : account.confirm.kind === 'force-grok-edit'
+                        ? 'edit'
+                        : 'switch'
+                }:${account.confirm.profile.id}`
           }
           onClose={() => account.setConfirm(null)}
           onConfirm={() =>
-            account.confirm?.kind === 'delete'
-              ? void account.deleteProfile(account.confirm.profile)
-              : account.confirm?.kind === 'force-grok-relay'
-                ? void account.setGrokRelayEnabled(
-                    account.confirm.profile,
-                    account.confirm.enabled,
-                    true,
-                  )
-                : account.confirm?.kind === 'force-grok-edit'
-                  ? void account.saveProfile(undefined, true)
-                  : account.confirm && void account.switchTo(account.confirm.profile, true)
+            account.confirm?.kind === 'enable-gateway'
+              ? void account.enableGatewayAndUse()
+              : account.confirm?.kind === 'delete'
+                ? void account.deleteProfile(account.confirm.profile)
+                : account.confirm?.kind === 'force-grok-relay'
+                  ? void account.setGrokRelayEnabled(
+                      account.confirm.profile,
+                      account.confirm.enabled,
+                      true,
+                    )
+                  : account.confirm?.kind === 'force-grok-edit'
+                    ? void account.saveProfile(undefined, true)
+                    : account.confirm && void account.switchTo(account.confirm.profile, true)
           }
         />
       )}

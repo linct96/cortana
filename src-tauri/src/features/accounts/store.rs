@@ -1,8 +1,11 @@
 use super::oauth::{chatgpt_user_id_from_auth_json, identity_from_auth_json};
 use crate::{
-    features::models,
+    features::{
+        gateway::{self, UpstreamAuthMode, UpstreamProtocol, DEFAULT_ANTHROPIC_MAX_TOKENS},
+        models,
+    },
     platform::{
-        db::{credential_fingerprint, database_error, open_database},
+        db::{credential_fingerprint, database_error, get_setting, open_database, set_setting},
         local_web,
         state::{
             now_millis, AccountProduct, AppState, AppStatus, AuthState, Identity, ProfileSummary,
@@ -12,10 +15,11 @@ use crate::{
     products::{
         claude,
         codex::{
-            apply_profile_files, apply_profile_files_with_model, auth_path, build_relay_auth_json,
-            extract_api_key, extract_api_key_from_value, extract_refresh_token,
-            has_usable_credential, normalize_api_base_url, read_auth_json, read_provider_config,
-            restore_profile_files, usage::fetch_account_usage,
+            apply_gateway_profile_files_with_model, apply_profile_files,
+            apply_profile_files_with_model, auth_path, build_relay_auth_json,
+            clear_managed_profile_files, extract_api_key, extract_api_key_from_value,
+            extract_refresh_token, has_usable_credential, normalize_api_base_url, read_auth_json,
+            read_provider_config, restore_profile_files, usage::fetch_account_usage,
         },
     },
 };
@@ -73,7 +77,7 @@ pub(crate) fn list_profiles_for_product(
     active_id: Option<&str>,
 ) -> Result<Vec<ProfileSummary>, String> {
     let mut statement = connection
-        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json, oauth_invalidated_at FROM accounts WHERE product = ?1 AND (?1 <> 'antigravity' OR account_type = 'oauth') ORDER BY sort_order ASC, created_at ASC")
+        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json, oauth_invalidated_at, upstream_protocol, upstream_auth_mode, anthropic_max_tokens FROM accounts WHERE product = ?1 AND (?1 <> 'antigravity' OR account_type = 'oauth') ORDER BY sort_order ASC, created_at ASC")
         .map_err(database_error)?;
     let rows = statement
         .query_map(params![product.as_str()], |row| {
@@ -114,6 +118,9 @@ pub(crate) fn profile_summary_from_row(
         product,
         account_type: row.get(1)?,
         api_base_url: row.get(2)?,
+        upstream_protocol: row.get(20)?,
+        upstream_auth_mode: row.get(21)?,
+        anthropic_max_tokens: row.get(22)?,
         account_id: row.get(3)?,
         email: row.get(4)?,
         alias: row.get(5)?,
@@ -155,7 +162,7 @@ pub(crate) fn get_profile_summary_for_product(
 ) -> Result<ProfileSummary, String> {
     connection
         .query_row(
-            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json, oauth_invalidated_at FROM accounts WHERE id = ?1 AND product = ?2 AND (?2 <> 'antigravity' OR account_type = 'oauth')",
+            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json, oauth_invalidated_at, upstream_protocol, upstream_auth_mode, anthropic_max_tokens FROM accounts WHERE id = ?1 AND product = ?2 AND (?2 <> 'antigravity' OR account_type = 'oauth')",
             params![profile_id, product.as_str()],
             |row| profile_summary_from_row(row, product, active_id),
         )
@@ -238,6 +245,9 @@ pub(crate) fn detected_profile_from_auth(
         product: AccountProduct::Codex,
         account_type: ACCOUNT_TYPE_OAUTH.to_string(),
         api_base_url: None,
+        upstream_protocol: "openaiResponses".to_string(),
+        upstream_auth_mode: "bearer".to_string(),
+        anthropic_max_tokens: 16_384,
         account_id: identity.account_id,
         email: identity.email,
         alias,
@@ -285,6 +295,9 @@ fn detected_relay_profile(
         product: AccountProduct::Codex,
         account_type: ACCOUNT_TYPE_RELAY.to_string(),
         api_base_url,
+        upstream_protocol: "openaiResponses".to_string(),
+        upstream_auth_mode: "bearer".to_string(),
+        anthropic_max_tokens: 16_384,
         account_id: String::new(),
         email: String::new(),
         alias,
@@ -329,7 +342,7 @@ fn relay_profile_id_for_credentials(
     };
     connection
         .query_row(
-            "SELECT id FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND api_base_url = ?1 AND account_id = ?2 LIMIT 1",
+            "SELECT id FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND api_base_url = ?1 AND account_id = ?2 AND upstream_protocol = 'openaiResponses' LIMIT 1",
             params![api_base_url, credential_fingerprint(api_key)],
             |row| row.get(0),
         )
@@ -373,6 +386,46 @@ pub(crate) fn resolve_auth_state(
 ) -> Result<(AuthState, Option<String>), String> {
     let config_path = path.with_file_name("config.toml");
     let (_, _, api_base_url, bearer_token) = read_provider_config(&config_path)?;
+    if api_base_url.as_deref().is_some_and(gateway::is_base_url) {
+        let profile_id = if gateway::is_enabled(connection)?
+            && bearer_token.as_deref().is_some_and(|token| {
+                gateway::local_api_key(connection)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|key| {
+                        credential_fingerprint(token) == credential_fingerprint(&key)
+                    })
+            }) {
+            get_setting(connection, gateway::ACTIVE_PROFILE_SETTING)?.filter(|profile_id| {
+                connection
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM accounts WHERE id = ?1 AND product = 'codex')",
+                        params![profile_id],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .unwrap_or(false)
+            })
+        } else {
+            None
+        };
+        return Ok((
+            AuthState {
+                kind: if profile_id.is_some() {
+                    "managed"
+                } else {
+                    "unmanaged"
+                }
+                .to_string(),
+                message: if profile_id.is_some() {
+                    "当前 Codex 网关已匹配已保存账户。"
+                } else {
+                    "当前 Codex 网关配置未匹配可用账户。"
+                }
+                .to_string(),
+            },
+            profile_id,
+        ));
+    }
     let (profile_id, auth_json) = if let Some(api_key) = bearer_token {
         (
             relay_profile_id_for_credentials(
@@ -437,7 +490,7 @@ pub(crate) fn switch_profile_internal(
     }
     let row = connection
         .query_row(
-            "SELECT id, account_type, api_base_url, auth_json, model_profile_id, default_model_id FROM accounts WHERE id = ?1 AND product = 'codex'",
+            "SELECT id, account_type, api_base_url, auth_json, model_profile_id, default_model_id, upstream_protocol FROM accounts WHERE id = ?1 AND product = 'codex'",
             params![profile_id],
             |row| {
                 Ok((
@@ -447,20 +500,39 @@ pub(crate) fn switch_profile_internal(
                     row.get::<_, String>(3)?,
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             },
         )
         .optional()
         .map_err(database_error)?
         .ok_or_else(|| "账户不存在。".to_string())?;
-    let backup = apply_profile_files_with_model(
-        state,
-        &row.3,
-        &row.1,
-        row.2.as_deref(),
-        row.4.as_deref(),
-        row.5.as_deref(),
-    )?;
+    let protocol = UpstreamProtocol::parse(&row.6)?;
+    let gateway_enabled = gateway::is_enabled(&connection)?;
+    if protocol.requires_gateway() && !gateway_enabled {
+        return Err("该账号协议需要先启用网关模式。".to_string());
+    }
+    let backup = if gateway_enabled {
+        gateway::ensure_available()?;
+        let local_api_key = gateway::ensure_local_api_key(&connection)?;
+        apply_gateway_profile_files_with_model(
+            state,
+            &local_api_key,
+            row.4.as_deref(),
+            row.5.as_deref(),
+            protocol,
+        )?
+    } else {
+        apply_profile_files_with_model(
+            state,
+            &row.3,
+            &row.1,
+            row.2.as_deref(),
+            row.4.as_deref(),
+            row.5.as_deref(),
+            protocol,
+        )?
+    };
     let now = now_millis();
     let database_result = (|| {
         let transaction = connection.transaction().map_err(database_error)?;
@@ -470,6 +542,13 @@ pub(crate) fn switch_profile_internal(
                 params![now, row.0],
             )
             .map_err(database_error)?;
+        transaction
+            .execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![gateway::ACTIVE_PROFILE_SETTING, row.0],
+            )
+            .map_err(database_error)?;
         transaction.commit().map_err(database_error)
     })();
     if let Err(error) = database_result {
@@ -477,6 +556,78 @@ pub(crate) fn switch_profile_internal(
         return Err(error);
     }
     get_profile_summary(&connection, &row.0, Some(&row.0))
+}
+
+pub(crate) fn set_gateway_mode_internal(
+    state: &AppState,
+    enabled: bool,
+    profile_id: Option<&str>,
+) -> Result<gateway::GatewayStatus, String> {
+    let connection = open_database(state)?;
+    let currently_enabled = gateway::is_enabled(&connection)?;
+    let path = auth_path(state)?;
+    let (_, current_profile_id) = resolve_auth_state(&connection, &path)?;
+    let target_profile_id = profile_id.or(current_profile_id.as_deref());
+
+    if enabled {
+        gateway::ensure_available()?;
+        gateway::ensure_local_api_key(&connection)?;
+        set_setting(&connection, gateway::GATEWAY_ENABLED_SETTING, "true")?;
+        if let Some(profile_id) = target_profile_id {
+            if let Err(error) = switch_profile_internal(state, profile_id, true) {
+                set_setting(
+                    &connection,
+                    gateway::GATEWAY_ENABLED_SETTING,
+                    &currently_enabled.to_string(),
+                )?;
+                return Err(error);
+            }
+        }
+        return gateway::gateway_status(state);
+    }
+
+    if !currently_enabled {
+        return gateway::gateway_status(state);
+    }
+    let Some(profile_id) = target_profile_id else {
+        set_setting(&connection, gateway::GATEWAY_ENABLED_SETTING, "false")?;
+        return gateway::gateway_status(state);
+    };
+    let protocol = connection
+        .query_row(
+            "SELECT upstream_protocol FROM accounts WHERE id = ?1 AND product = 'codex'",
+            params![profile_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(database_error)?
+        .map(|value| UpstreamProtocol::parse(&value))
+        .transpose()?
+        .ok_or_else(|| "账户不存在。".to_string())?;
+    if protocol.requires_gateway() {
+        let backup = clear_managed_profile_files(state)?;
+        let result = (|| {
+            set_setting(&connection, gateway::GATEWAY_ENABLED_SETTING, "false")?;
+            connection
+                .execute(
+                    "DELETE FROM settings WHERE key = ?1",
+                    params![gateway::ACTIVE_PROFILE_SETTING],
+                )
+                .map_err(database_error)?;
+            Ok::<_, String>(())
+        })();
+        if let Err(error) = result {
+            restore_profile_files(state, &backup)?;
+            return Err(error);
+        }
+    } else {
+        set_setting(&connection, gateway::GATEWAY_ENABLED_SETTING, "false")?;
+        if let Err(error) = switch_profile_internal(state, profile_id, true) {
+            set_setting(&connection, gateway::GATEWAY_ENABLED_SETTING, "true")?;
+            return Err(error);
+        }
+    }
+    gateway::gateway_status(state)
 }
 
 pub(crate) fn update_profile_internal(
@@ -521,9 +672,24 @@ pub(crate) fn update_profile_internal(
     let auth_path = auth_path(state)?;
     let (_, active_id) = resolve_auth_state(&connection, &auth_path)?;
     let active = active_id.as_deref() == Some(profile_id);
-    let backup = active
-        .then(|| apply_profile_files(state, &formatted_auth_json, ACCOUNT_TYPE_OAUTH, None))
-        .transpose()?;
+    let backup = if !active {
+        None
+    } else if gateway::is_enabled(&connection)? {
+        Some(apply_gateway_profile_files_with_model(
+            state,
+            &gateway::ensure_local_api_key(&connection)?,
+            None,
+            None,
+            UpstreamProtocol::OpenAiResponses,
+        )?)
+    } else {
+        Some(apply_profile_files(
+            state,
+            &formatted_auth_json,
+            ACCOUNT_TYPE_OAUTH,
+            None,
+        )?)
+    };
     let database_result = (|| {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -623,7 +789,11 @@ pub(crate) fn upsert_relay_profile(
     api_key: &str,
     api_base_url: &str,
     requested_alias: &str,
+    upstream_protocol: UpstreamProtocol,
+    upstream_auth_mode: UpstreamAuthMode,
+    anthropic_max_tokens: i64,
 ) -> Result<ProfileSummary, String> {
+    validate_gateway_settings(upstream_protocol, anthropic_max_tokens)?;
     let api_base_url = normalize_api_base_url(api_base_url)?;
     let auth_json = build_relay_auth_json(api_key)?;
     let fingerprint = credential_fingerprint(api_key);
@@ -633,8 +803,8 @@ pub(crate) fn upsert_relay_profile(
         .map_err(database_error)?;
     let existing = transaction
         .query_row(
-            "SELECT id, alias FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND api_base_url = ?1 AND account_id = ?2 LIMIT 1",
-            params![api_base_url, fingerprint],
+            "SELECT id, alias FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND api_base_url = ?1 AND account_id = ?2 AND upstream_protocol = ?3 AND upstream_auth_mode = ?4 LIMIT 1",
+            params![api_base_url, fingerprint, upstream_protocol.as_str(), upstream_auth_mode.as_str()],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
@@ -648,8 +818,8 @@ pub(crate) fn upsert_relay_profile(
         };
         transaction
             .execute(
-                "UPDATE accounts SET alias = ?1, auth_json = ?2, api_base_url = ?3, account_id = ?4, updated_at = ?5 WHERE id = ?6 AND product = 'codex'",
-                params![alias, auth_json, api_base_url, fingerprint, now, id],
+                "UPDATE accounts SET alias = ?1, auth_json = ?2, api_base_url = ?3, account_id = ?4, upstream_protocol = ?5, upstream_auth_mode = ?6, anthropic_max_tokens = ?7, updated_at = ?8 WHERE id = ?9 AND product = 'codex'",
+                params![alias, auth_json, api_base_url, fingerprint, upstream_protocol.as_str(), upstream_auth_mode.as_str(), anthropic_max_tokens, now, id],
             )
             .map_err(database_error)?;
         id
@@ -658,8 +828,8 @@ pub(crate) fn upsert_relay_profile(
         let alias = relay_alias(requested_alias, &api_base_url);
         transaction
             .execute(
-                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'codex', 'relay', ?2, ?3, '', ?4, '', ?5, ?6, ?6, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'codex'), 0))",
-                params![id, api_base_url, fingerprint, alias, auth_json, now],
+                "INSERT INTO accounts (id, product, account_type, api_base_url, account_id, email, alias, plan_type, auth_json, upstream_protocol, upstream_auth_mode, anthropic_max_tokens, created_at, updated_at, last_used_at, sort_order) VALUES (?1, 'codex', 'relay', ?2, ?3, '', ?4, '', ?5, ?6, ?7, ?8, ?9, ?9, NULL, COALESCE((SELECT MAX(sort_order) + 1 FROM accounts WHERE product = 'codex'), 0))",
+                params![id, api_base_url, fingerprint, alias, auth_json, upstream_protocol.as_str(), upstream_auth_mode.as_str(), anthropic_max_tokens, now],
             )
             .map_err(database_error)?;
         id
@@ -677,7 +847,11 @@ pub(crate) fn update_relay_profile_internal(
     requested_api_base_url: &str,
     model_profile_id: Option<&str>,
     default_model_id: Option<&str>,
+    upstream_protocol: UpstreamProtocol,
+    upstream_auth_mode: UpstreamAuthMode,
+    anthropic_max_tokens: i64,
 ) -> Result<ProfileSummary, String> {
+    validate_gateway_settings(upstream_protocol, anthropic_max_tokens)?;
     let api_base_url = normalize_api_base_url(requested_api_base_url)?;
     models::validate_model_selection(
         state,
@@ -716,8 +890,21 @@ pub(crate) fn update_relay_profile_internal(
     let auth_path = auth_path(state)?;
     let (_, active_id) = resolve_auth_state(&connection, &auth_path)?;
     let active = active_id.as_deref() == Some(profile_id);
+    let gateway_enabled = gateway::is_enabled(&connection)?;
+    if active && upstream_protocol.requires_gateway() && !gateway_enabled {
+        return Err("该账号协议需要先启用网关模式。".to_string());
+    }
     let backup = if !active {
         None
+    } else if gateway_enabled {
+        gateway::ensure_available()?;
+        Some(apply_gateway_profile_files_with_model(
+            state,
+            &gateway::ensure_local_api_key(&connection)?,
+            model_profile_id,
+            default_model_id,
+            upstream_protocol,
+        )?)
     } else if existing_model_profile_id.is_some() || model_profile_id.is_some() {
         Some(apply_profile_files_with_model(
             state,
@@ -726,6 +913,7 @@ pub(crate) fn update_relay_profile_internal(
             Some(&api_base_url),
             model_profile_id,
             default_model_id,
+            upstream_protocol,
         )?)
     } else {
         Some(apply_profile_files(
@@ -741,8 +929,8 @@ pub(crate) fn update_relay_profile_internal(
             .map_err(database_error)?;
         let duplicate_exists = transaction
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND id <> ?1 AND api_base_url = ?2 AND account_id = ?3)",
-                params![profile_id, api_base_url, fingerprint],
+                "SELECT EXISTS(SELECT 1 FROM accounts WHERE product = 'codex' AND account_type = 'relay' AND id <> ?1 AND api_base_url = ?2 AND account_id = ?3 AND upstream_protocol = ?4 AND upstream_auth_mode = ?5)",
+                params![profile_id, api_base_url, fingerprint, upstream_protocol.as_str(), upstream_auth_mode.as_str()],
                 |row| row.get::<_, bool>(0),
             )
             .map_err(database_error)?;
@@ -751,7 +939,7 @@ pub(crate) fn update_relay_profile_internal(
         }
         transaction
             .execute(
-                "UPDATE accounts SET alias = ?1, api_base_url = ?2, account_id = ?3, auth_json = ?4, model_profile_id = ?5, default_model_id = ?6, updated_at = ?7 WHERE id = ?8 AND product = 'codex'",
+                "UPDATE accounts SET alias = ?1, api_base_url = ?2, account_id = ?3, auth_json = ?4, model_profile_id = ?5, default_model_id = ?6, upstream_protocol = ?7, upstream_auth_mode = ?8, anthropic_max_tokens = ?9, updated_at = ?10 WHERE id = ?11 AND product = 'codex'",
                 params![
                     alias,
                     api_base_url,
@@ -759,8 +947,11 @@ pub(crate) fn update_relay_profile_internal(
                     auth_json,
                     model_profile_id,
                     default_model_id,
+                    upstream_protocol.as_str(),
+                    upstream_auth_mode.as_str(),
+                    anthropic_max_tokens,
                     now_millis(),
-                    profile_id
+                    profile_id,
                 ],
             )
             .map_err(database_error)?;
@@ -774,6 +965,37 @@ pub(crate) fn update_relay_profile_internal(
     }
     let (_, active_id) = resolve_auth_state(&connection, &auth_path)?;
     get_profile_summary(&connection, profile_id, active_id.as_deref())
+}
+
+fn validate_gateway_settings(
+    protocol: UpstreamProtocol,
+    anthropic_max_tokens: i64,
+) -> Result<(), String> {
+    if protocol == UpstreamProtocol::AnthropicMessages && anthropic_max_tokens <= 0 {
+        return Err("最大输出 Tokens 必须是正整数。".to_string());
+    }
+    if anthropic_max_tokens > i64::from(u32::MAX) {
+        return Err("最大输出 Tokens 过大。".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn default_gateway_settings(
+    upstream_protocol: Option<UpstreamProtocol>,
+    upstream_auth_mode: Option<UpstreamAuthMode>,
+    anthropic_max_tokens: Option<i64>,
+) -> (UpstreamProtocol, UpstreamAuthMode, i64) {
+    let protocol = upstream_protocol.unwrap_or_default();
+    let auth_mode = if protocol == UpstreamProtocol::AnthropicMessages {
+        upstream_auth_mode.unwrap_or_default()
+    } else {
+        UpstreamAuthMode::Bearer
+    };
+    (
+        protocol,
+        auth_mode,
+        anthropic_max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
+    )
 }
 
 pub(crate) fn relay_alias(requested_alias: &str, api_base_url: &str) -> String {

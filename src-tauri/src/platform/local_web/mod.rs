@@ -15,6 +15,7 @@ use dispatch::dispatch_command;
 use server::{effective_web_port, start_server, RunningServer};
 
 pub(crate) const DEFAULT_WEB_PORT: u16 = 11456;
+pub(crate) const DEVELOPMENT_WEB_PORT: u16 = 12456;
 const MIN_WEB_PORT: u16 = 1024;
 
 pub(crate) struct WebBridgeState {
@@ -218,7 +219,7 @@ mod tests {
     use super::server::{
         is_desktop_only_command, is_development_origin, is_local_host, is_production_origin,
     };
-    use super::{effective_web_port, DEFAULT_WEB_PORT};
+    use super::{effective_web_port, DEVELOPMENT_WEB_PORT};
     use serde_json::json;
 
     #[test]
@@ -245,7 +246,7 @@ mod tests {
 
     #[test]
     fn fixes_development_web_port() {
-        assert_eq!(effective_web_port(11457), DEFAULT_WEB_PORT);
+        assert_eq!(effective_web_port(11457), DEVELOPMENT_WEB_PORT);
     }
 
     #[test]

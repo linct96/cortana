@@ -1,10 +1,14 @@
 use super::store::{
-    app_status, get_profile_auth_json, list_profiles_for_product, relay_api_key_for_profile,
-    switch_profile_internal, update_profile_internal, update_relay_profile_internal,
-    upsert_profile_from_auth, upsert_relay_profile,
+    app_status, default_gateway_settings, get_profile_auth_json, list_profiles_for_product,
+    relay_api_key_for_profile, set_gateway_mode_internal, switch_profile_internal,
+    update_profile_internal, update_relay_profile_internal, upsert_profile_from_auth,
+    upsert_relay_profile,
 };
 use crate::{
-    features::models,
+    features::{
+        gateway::{UpstreamAuthMode, UpstreamProtocol},
+        models,
+    },
     platform::{
         db::{self, database_error, get_setting, open_database, set_setting},
         state::{
@@ -90,7 +94,29 @@ pub(crate) async fn open_codex_cli_with_profile(
 ) -> Result<(), String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        if crate::features::gateway::is_enabled(&open_database(&state)?)? {
+            switch_profile_internal(&state, &profile_id, true)?;
+        }
         open_codex_cli_with_profile_internal(&state, &profile_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) fn get_codex_gateway_mode(
+    state: State<'_, AppState>,
+) -> Result<crate::features::gateway::GatewayStatus, String> {
+    crate::features::gateway::gateway_status(&state)
+}
+
+pub(crate) async fn set_codex_gateway_mode(
+    state: State<'_, AppState>,
+    enabled: bool,
+    profile_id: Option<String>,
+) -> Result<crate::features::gateway::GatewayStatus, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        set_gateway_mode_internal(&state, enabled, profile_id.as_deref())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -127,7 +153,15 @@ pub(crate) async fn import_current_profile(
             } else {
                 requested_alias.trim()
             };
-            let profile = upsert_relay_profile(&state, &api_key, &api_base_url, alias)?;
+            let profile = upsert_relay_profile(
+                &state,
+                &api_key,
+                &api_base_url,
+                alias,
+                UpstreamProtocol::default(),
+                UpstreamAuthMode::default(),
+                16_384,
+            )?;
             switch_profile_internal(&state, &profile.id, true)?
         } else {
             let auth_json = read_auth_json(&auth_path)?
@@ -141,7 +175,15 @@ pub(crate) async fn import_current_profile(
                 } else {
                     requested_alias.trim()
                 };
-                let profile = upsert_relay_profile(&state, &api_key, &api_base_url, alias)?;
+                let profile = upsert_relay_profile(
+                    &state,
+                    &api_key,
+                    &api_base_url,
+                    alias,
+                    UpstreamProtocol::default(),
+                    UpstreamAuthMode::default(),
+                    16_384,
+                )?;
                 switch_profile_internal(&state, &profile.id, true)?
             } else {
                 let profile = upsert_profile_from_auth(&state, &auth_json, requested_alias.trim())?;
@@ -172,7 +214,12 @@ pub(crate) fn add_relay_profile(
     product: AccountProduct,
     model_profile_id: Option<String>,
     default_model_id: Option<String>,
+    upstream_protocol: Option<UpstreamProtocol>,
+    upstream_auth_mode: Option<UpstreamAuthMode>,
+    anthropic_max_tokens: Option<i64>,
 ) -> Result<ProfileSummary, String> {
+    let (upstream_protocol, upstream_auth_mode, anthropic_max_tokens) =
+        default_gateway_settings(upstream_protocol, upstream_auth_mode, anthropic_max_tokens);
     if matches!(
         product,
         AccountProduct::Codex | AccountProduct::Claude | AccountProduct::Grok
@@ -186,9 +233,15 @@ pub(crate) fn add_relay_profile(
     }
     let alias = alias.unwrap_or_default();
     let profile = match product {
-        AccountProduct::Codex => {
-            upsert_relay_profile(&state, &api_key, &api_base_url, alias.trim())?
-        }
+        AccountProduct::Codex => upsert_relay_profile(
+            &state,
+            &api_key,
+            &api_base_url,
+            alias.trim(),
+            upstream_protocol,
+            upstream_auth_mode,
+            anthropic_max_tokens,
+        )?,
         AccountProduct::Claude => {
             claude::upsert_relay_profile(&state, &api_key, &api_base_url, alias.trim(), "manual")?
         }
@@ -343,7 +396,12 @@ pub(crate) fn update_relay_profile(
     model_profile_id: Option<String>,
     default_model_id: Option<String>,
     force: bool,
+    upstream_protocol: Option<UpstreamProtocol>,
+    upstream_auth_mode: Option<UpstreamAuthMode>,
+    anthropic_max_tokens: Option<i64>,
 ) -> Result<ProfileSummary, String> {
+    let (upstream_protocol, upstream_auth_mode, anthropic_max_tokens) =
+        default_gateway_settings(upstream_protocol, upstream_auth_mode, anthropic_max_tokens);
     if matches!(product, AccountProduct::Claude | AccountProduct::Grok) {
         models::validate_model_selection(
             &state,
@@ -361,6 +419,9 @@ pub(crate) fn update_relay_profile(
             &api_base_url,
             model_profile_id.as_deref(),
             default_model_id.as_deref(),
+            upstream_protocol,
+            upstream_auth_mode,
+            anthropic_max_tokens,
         )?,
         AccountProduct::Claude => {
             let profile = claude::update_relay_profile(
@@ -455,6 +516,19 @@ pub(crate) fn delete_profile(
     }
     if product == AccountProduct::Claude {
         claude::clear_active_profile(&state, &profile_id)?;
+    }
+    if product == AccountProduct::Codex {
+        let connection = open_database(&state)?;
+        let active_profile_id = get_setting(
+            &connection,
+            crate::features::gateway::ACTIVE_PROFILE_SETTING,
+        )?;
+        if crate::features::gateway::is_enabled(&connection)?
+            && active_profile_id.as_deref() == Some(profile_id.as_str())
+        {
+            drop(connection);
+            set_gateway_mode_internal(&state, false, None)?;
+        }
     }
     let mut connection = open_database(&state)?;
     let transaction = connection.transaction().map_err(database_error)?;

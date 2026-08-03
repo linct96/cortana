@@ -24,6 +24,15 @@ pub(super) async fn dispatch_command(
         "get_app_status" => result!(
             accounts::get_app_status(app.clone(), app.state(), arg(&args, "product")?).await
         ),
+        "get_codex_gateway_mode" => result!(accounts::get_codex_gateway_mode(app.state())),
+        "set_codex_gateway_mode" => result!(
+            accounts::set_codex_gateway_mode(
+                app.state(),
+                arg(&args, "enabled")?,
+                optional(&args, "profileId")?
+            )
+            .await
+        ),
         "get_terminal_app" => result!(env::get_terminal_app(app.state())),
         "set_terminal_app" => result!(env::set_terminal_app(
             app.state(),
@@ -102,7 +111,10 @@ pub(super) async fn dispatch_command(
             arg(&args, "activate")?,
             arg(&args, "product")?,
             optional(&args, "modelProfileId")?,
-            optional(&args, "defaultModelId")?
+            optional(&args, "defaultModelId")?,
+            optional(&args, "upstreamProtocol")?,
+            optional(&args, "upstreamAuthMode")?,
+            optional(&args, "anthropicMaxTokens")?
         )),
         "refresh_profile_usage" => {
             result!(accounts::refresh_profile_usage(app.state(), arg(&args, "profileId")?).await)
@@ -159,7 +171,10 @@ pub(super) async fn dispatch_command(
             arg(&args, "product")?,
             optional(&args, "modelProfileId")?,
             optional(&args, "defaultModelId")?,
-            arg(&args, "force")?
+            arg(&args, "force")?,
+            optional(&args, "upstreamProtocol")?,
+            optional(&args, "upstreamAuthMode")?,
+            optional(&args, "anthropicMaxTokens")?
         )),
         "get_model_profiles_status" => {
             result!(models::get_model_profiles_status(app.state(), arg(&args, "product")?).await)
