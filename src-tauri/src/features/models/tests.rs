@@ -249,6 +249,8 @@ fn aggregates_grok_accounts_with_independent_credentials() {
     assert!(document["model"].get(&second_key).is_none());
     assert!(document["models"].get("default").is_none());
     assert_eq!(document["ui"]["yolo"].as_bool(), Some(false));
+    // Windows 无法删除仍被 SQLite 连接占用的数据库文件。
+    drop(connection);
     fs::remove_dir_all(directory).unwrap();
 }
 
