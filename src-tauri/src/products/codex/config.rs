@@ -438,8 +438,7 @@ pub(crate) fn extract_refresh_token(auth_json: &str) -> Result<String, String> {
     if !auth.is_object() {
         return Err("auth.json 必须是一个 JSON 对象。".to_string());
     }
-    auth.get("tokens")
-        .and_then(|tokens| tokens.get("refresh_token"))
+    auth.get("refresh_token")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|token| !token.is_empty())
@@ -449,13 +448,22 @@ pub(crate) fn extract_refresh_token(auth_json: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_codex_config, save_codex_config_internal, AppState};
+    use super::{extract_refresh_token, read_codex_config, save_codex_config_internal, AppState};
     use crate::platform::db::{initialize_database, open_database, set_setting};
     use std::{
         fs,
         sync::{Arc, Mutex},
     };
     use uuid::Uuid;
+
+    #[test]
+    fn extracts_top_level_refresh_token() {
+        assert_eq!(
+            extract_refresh_token(r#"{"refresh_token":" top-level "}"#).unwrap(),
+            "top-level"
+        );
+        assert!(extract_refresh_token(r#"{"tokens":{"refresh_token":"nested"}}"#).is_err());
+    }
 
     #[test]
     fn reads_and_writes_config_from_the_configured_codex_home() {

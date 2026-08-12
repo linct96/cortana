@@ -4,25 +4,23 @@ Codex OAuth 登录使用以下标准结构：
 
 ```json
 {
-  "OPENAI_API_KEY": null,
+  "access_token": "<access_token>",
+  "account_id": "<chatgpt_account_id>",
+  "id_token": "<id_token>",
   "last_refresh": "2026-07-01T10:01:36.062573Z",
-  "tokens": {
-    "access_token": "<access_token>",
-    "account_id": "<chatgpt_account_id>",
-    "id_token": "<id_token>",
-    "refresh_token": "<refresh_token>"
-  }
+  "refresh_token": "<refresh_token>",
+  "type": "codex"
 }
 ```
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | `string \| null` | OAuth 登录时为 `null`；API Key 登录时保存对应密钥。 |
+| `access_token` | `string` | 调用 Codex 与账户信息接口的访问令牌。 |
+| `account_id` | `string` | ChatGPT 账户或工作区 ID。 |
+| `id_token` | `string` | 包含邮箱、账户 ID、套餐等身份声明的 JWT。 |
 | `last_refresh` | `string` | 最近刷新认证信息的 RFC 3339 UTC 时间。 |
-| `tokens.access_token` | `string` | 调用 Codex 与账户信息接口的访问令牌。 |
-| `tokens.account_id` | `string` | ChatGPT 账户或工作区 ID。 |
-| `tokens.id_token` | `string` | 包含邮箱、账户 ID、套餐等身份声明的 JWT。 |
-| `tokens.refresh_token` | `string` | 用于刷新访问令牌。 |
+| `refresh_token` | `string` | 用于刷新访问令牌。 |
+| `type` | `string` | 认证类型，Codex 账户为 `codex`。 |
 
 Codex API Key 登录可以使用更精简的结构：
 
