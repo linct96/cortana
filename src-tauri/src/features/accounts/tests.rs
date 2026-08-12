@@ -49,12 +49,11 @@ fn oauth_auth(account_id: &str, user_id: &str, refresh_token: &str, access_token
         encode(b"signature")
     );
     json!({
-        "tokens": {
-            "account_id": account_id,
-            "id_token": id_token,
-            "access_token": access_token,
-            "refresh_token": refresh_token
-        }
+        "account_id": account_id,
+        "id_token": id_token,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "type": "codex"
     })
     .to_string()
 }
@@ -68,7 +67,7 @@ fn access_token_auth(expires_at: Option<i64>) -> String {
         encode(claims.to_string().as_bytes()),
         encode(b"signature")
     );
-    json!({ "tokens": { "access_token": access_token } }).to_string()
+    json!({ "access_token": access_token }).to_string()
 }
 
 #[test]
@@ -76,7 +75,7 @@ fn prepares_temporary_codex_cli_credentials() {
     assert!(!codex_token_needs_refresh(&access_token_auth(Some(4_601)), 1_000).unwrap());
     assert!(codex_token_needs_refresh(&access_token_auth(Some(4_600)), 1_000).unwrap());
     assert!(!codex_token_needs_refresh(&access_token_auth(None), 1_000).unwrap());
-    assert!(codex_token_needs_refresh(r#"{"tokens":{}}"#, 1_000).unwrap());
+    assert!(codex_token_needs_refresh(r#"{}"#, 1_000).unwrap());
     let current = access_token_auth(None);
     assert!(codex_auth_needs_refresh(&current, Some(&current), 1_000).unwrap());
     assert!(!codex_auth_needs_refresh(&current, Some("already-refreshed"), 1_000).unwrap());
@@ -271,10 +270,8 @@ fn builds_reset_credit_http_request() {
         encode(b"signature")
     );
     let auth_json = json!({
-        "tokens": {
-            "id_token": id_token,
-            "access_token": "access-token"
-        }
+        "id_token": id_token,
+        "access_token": "access-token"
     })
     .to_string();
     let request = build_reset_credit_request(

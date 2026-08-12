@@ -687,35 +687,32 @@ pub(crate) fn build_codex_auth_json(token: &OAuthTokenResponse) -> Result<String
         identity = identity_from_jwt(access_token);
     }
     serde_json::to_string_pretty(&json!({
-        "OPENAI_API_KEY": Value::Null,
-        "tokens": {
-            "access_token": access_token,
-            "refresh_token": token.refresh_token.as_deref().unwrap_or_default(),
-            "id_token": token.id_token.as_deref().unwrap_or_default(),
-            "account_id": identity.account_id,
-        },
+        "access_token": access_token,
+        "account_id": identity.account_id,
+        "id_token": token.id_token.as_deref().unwrap_or_default(),
         "last_refresh": Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true),
+        "refresh_token": token.refresh_token.as_deref().unwrap_or_default(),
+        "type": "codex",
     }))
     .map_err(|error| error.to_string())
 }
 
 pub(crate) fn identity_from_auth_json(auth: &Value) -> Identity {
-    let tokens = auth.get("tokens").and_then(Value::as_object);
-    let id_token = tokens
-        .and_then(|tokens| tokens.get("id_token"))
+    let id_token = auth
+        .get("id_token")
         .and_then(Value::as_str)
         .unwrap_or_default();
     let mut identity = identity_from_id_token(id_token);
-    if let Some(account_id) = tokens
-        .and_then(|tokens| tokens.get("account_id"))
+    if let Some(account_id) = auth
+        .get("account_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|account_id| !account_id.is_empty())
     {
         identity.account_id = account_id.to_string();
     }
-    let access_token = tokens
-        .and_then(|tokens| tokens.get("access_token"))
+    let access_token = auth
+        .get("access_token")
         .and_then(Value::as_str)
         .unwrap_or_default();
     let access_identity = identity_from_jwt(access_token);
@@ -783,10 +780,9 @@ pub(crate) fn identity_from_jwt(token: &str) -> Identity {
 }
 
 pub(crate) fn chatgpt_user_id_from_auth_json(auth: &Value) -> String {
-    let tokens = auth.get("tokens").and_then(Value::as_object);
     ["id_token", "access_token"]
         .into_iter()
-        .filter_map(|key| tokens?.get(key)?.as_str())
+        .filter_map(|key| auth.get(key)?.as_str())
         .find_map(|token| {
             let claims = decode_jwt_claims(token)?;
             let auth = claims.get("https://api.openai.com/auth")?.as_object()?;
