@@ -168,7 +168,7 @@ export function AddAccountDialog({
             {(product === 'codex'
               ? [
                   ['browser', '浏览器授权'],
-                  ['paste', '粘贴 auth.json'],
+                  ['paste', '粘贴凭据'],
                   ['relay', '中转站'],
                 ]
               : [
@@ -199,13 +199,13 @@ export function AddAccountDialog({
             {product === 'codex' && (
               <TabsContent value="paste">
                 <Field>
-                  <FieldLabel htmlFor="auth-json">auth.json</FieldLabel>
+                  <FieldLabel htmlFor="auth-json">auth.json 或 refresh_token</FieldLabel>
                   <Textarea
                     id="auth-json"
                     className="min-h-0 resize-none field-sizing-fixed font-mono text-xs"
                     value={authJson}
                     onChange={(event) => setAuthJson(event.target.value)}
-                    placeholder='{"tokens":{"refresh_token":"..."}}'
+                    placeholder="粘贴完整 auth.json 或单独的 refresh_token"
                     rows={2}
                     autoComplete="off"
                     spellCheck={false}

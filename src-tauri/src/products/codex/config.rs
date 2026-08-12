@@ -438,7 +438,8 @@ pub(crate) fn extract_refresh_token(auth_json: &str) -> Result<String, String> {
     if !auth.is_object() {
         return Err("auth.json 必须是一个 JSON 对象。".to_string());
     }
-    auth.get("refresh_token")
+    auth.get("tokens")
+        .and_then(|tokens| tokens.get("refresh_token"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|token| !token.is_empty())
@@ -457,12 +458,12 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn extracts_top_level_refresh_token() {
+    fn extracts_nested_refresh_token() {
         assert_eq!(
-            extract_refresh_token(r#"{"refresh_token":" top-level "}"#).unwrap(),
-            "top-level"
+            extract_refresh_token(r#"{"tokens":{"refresh_token":" nested "}}"#).unwrap(),
+            "nested"
         );
-        assert!(extract_refresh_token(r#"{"tokens":{"refresh_token":"nested"}}"#).is_err());
+        assert!(extract_refresh_token(r#"{"refresh_token":"top-level"}"#).is_err());
     }
 
     #[test]
