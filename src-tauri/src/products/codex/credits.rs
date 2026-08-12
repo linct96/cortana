@@ -259,7 +259,8 @@ pub(crate) fn build_reset_credit_request(
     let auth: Value =
         serde_json::from_str(auth_json).map_err(|_| "存档的 auth.json 已损坏。".to_string())?;
     let access_token = auth
-        .get("access_token")
+        .get("tokens")
+        .and_then(|tokens| tokens.get("access_token"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|token| !token.is_empty())
@@ -278,7 +279,8 @@ pub(crate) fn build_reset_credit_request(
         request = request.header("ChatGPT-Account-ID", account_id);
     }
     let fedramp = ["id_token", "access_token"].into_iter().any(|key| {
-        auth.get(key)
+        auth.get("tokens")
+            .and_then(|tokens| tokens.get(key))
             .and_then(Value::as_str)
             .and_then(decode_jwt_claims)
             .and_then(|claims| {

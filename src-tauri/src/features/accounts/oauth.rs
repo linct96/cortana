@@ -6,8 +6,8 @@ use crate::{
             AccountProduct, AppState, Identity, OAuthProgress, OAuthTokenResponse, PendingOAuth,
             ProfileSummary, ANTIGRAVITY_OAUTH_AUTHORIZE_URL, ANTIGRAVITY_OAUTH_CLIENT_ID,
             ANTIGRAVITY_OAUTH_CLIENT_SECRET, ANTIGRAVITY_OAUTH_SCOPE, ANTIGRAVITY_OAUTH_TOKEN_URL,
-            OAUTH_AUTHORIZE_URL, OAUTH_CALLBACK_URL, OAUTH_CLIENT_ID, OAUTH_SCOPE, OAUTH_TIMEOUT,
-            OAUTH_TOKEN_URL,
+            MAX_IMPORTED_AUTH_JSON_BYTES, OAUTH_AUTHORIZE_URL, OAUTH_CALLBACK_URL, OAUTH_CLIENT_ID,
+            OAUTH_SCOPE, OAUTH_TIMEOUT, OAUTH_TOKEN_URL,
         },
         tray::refresh_tray,
     },
@@ -55,7 +55,7 @@ pub(crate) fn import_auth_json_internal(
     alias: Option<String>,
     activate: bool,
 ) -> Result<ProfileSummary, String> {
-    let refresh_token = extract_refresh_token(auth_json)?;
+    let refresh_token = refresh_token_from_paste(auth_json)?;
     let token = refresh_oauth_token(&refresh_token)?;
     let refreshed_auth_json = build_codex_auth_json(&token)?;
     let identity = serde_json::from_str(&refreshed_auth_json)
@@ -76,6 +76,20 @@ pub(crate) fn import_auth_json_internal(
     };
     refresh_tray(app)?;
     Ok(profile)
+}
+
+fn refresh_token_from_paste(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.starts_with('{') {
+        return extract_refresh_token(value);
+    }
+    if value.is_empty()
+        || value.len() > MAX_IMPORTED_AUTH_JSON_BYTES
+        || value.chars().any(char::is_whitespace)
+    {
+        return Err("请粘贴完整 auth.json 或单独的 refresh_token。".to_string());
+    }
+    Ok(value.to_string())
 }
 
 pub(crate) async fn start_oauth_add(
@@ -687,32 +701,36 @@ pub(crate) fn build_codex_auth_json(token: &OAuthTokenResponse) -> Result<String
         identity = identity_from_jwt(access_token);
     }
     serde_json::to_string_pretty(&json!({
-        "access_token": access_token,
-        "account_id": identity.account_id,
-        "id_token": token.id_token.as_deref().unwrap_or_default(),
+        "auth_mode": "chatgpt",
+        "OPENAI_API_KEY": Value::Null,
+        "tokens": {
+            "id_token": token.id_token.as_deref().unwrap_or_default(),
+            "access_token": access_token,
+            "refresh_token": token.refresh_token.as_deref().unwrap_or_default(),
+            "account_id": identity.account_id,
+        },
         "last_refresh": Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true),
-        "refresh_token": token.refresh_token.as_deref().unwrap_or_default(),
-        "type": "codex",
     }))
     .map_err(|error| error.to_string())
 }
 
 pub(crate) fn identity_from_auth_json(auth: &Value) -> Identity {
-    let id_token = auth
-        .get("id_token")
+    let tokens = auth.get("tokens").and_then(Value::as_object);
+    let id_token = tokens
+        .and_then(|tokens| tokens.get("id_token"))
         .and_then(Value::as_str)
         .unwrap_or_default();
     let mut identity = identity_from_id_token(id_token);
-    if let Some(account_id) = auth
-        .get("account_id")
+    if let Some(account_id) = tokens
+        .and_then(|tokens| tokens.get("account_id"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|account_id| !account_id.is_empty())
     {
         identity.account_id = account_id.to_string();
     }
-    let access_token = auth
-        .get("access_token")
+    let access_token = tokens
+        .and_then(|tokens| tokens.get("access_token"))
         .and_then(Value::as_str)
         .unwrap_or_default();
     let access_identity = identity_from_jwt(access_token);
@@ -780,9 +798,10 @@ pub(crate) fn identity_from_jwt(token: &str) -> Identity {
 }
 
 pub(crate) fn chatgpt_user_id_from_auth_json(auth: &Value) -> String {
+    let tokens = auth.get("tokens").and_then(Value::as_object);
     ["id_token", "access_token"]
         .into_iter()
-        .filter_map(|key| auth.get(key)?.as_str())
+        .filter_map(|key| tokens?.get(key)?.as_str())
         .find_map(|token| {
             let claims = decode_jwt_claims(token)?;
             let auth = claims.get("https://api.openai.com/auth")?.as_object()?;
@@ -907,15 +926,56 @@ pub(crate) fn write_browser_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_authorize_url, pending_authorization_url, validate_callback_url};
+    use super::{
+        build_authorize_url, build_codex_auth_json, pending_authorization_url,
+        refresh_token_from_paste, validate_callback_url,
+    };
     use crate::{
         platform::state::{
-            AccountProduct, PendingOAuth, ANTIGRAVITY_OAUTH_AUTHORIZE_URL, OAUTH_AUTHORIZE_URL,
-            OAUTH_CALLBACK_URL, OAUTH_CLIENT_ID,
+            AccountProduct, OAuthTokenResponse, PendingOAuth, ANTIGRAVITY_OAUTH_AUTHORIZE_URL,
+            OAUTH_AUTHORIZE_URL, OAUTH_CALLBACK_URL, OAUTH_CLIENT_ID,
         },
         products::claude,
     };
+    use serde_json::Value;
     use url::Url;
+
+    #[test]
+    fn accepts_auth_json_or_standalone_refresh_token() {
+        assert_eq!(
+            refresh_token_from_paste(" rt.1.token ").unwrap(),
+            "rt.1.token"
+        );
+        assert_eq!(
+            refresh_token_from_paste(r#"{"tokens":{"refresh_token":"nested"}}"#).unwrap(),
+            "nested"
+        );
+        assert!(refresh_token_from_paste("").is_err());
+        assert!(refresh_token_from_paste("two tokens").is_err());
+    }
+
+    #[test]
+    fn builds_current_codex_auth_json_shape() {
+        let auth: Value = serde_json::from_str(
+            &build_codex_auth_json(&OAuthTokenResponse {
+                access_token: Some("access".to_string()),
+                refresh_token: Some("refresh".to_string()),
+                id_token: Some("identity".to_string()),
+                expires_in: None,
+                token_type: None,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(auth["auth_mode"], "chatgpt");
+        assert!(auth["OPENAI_API_KEY"].is_null());
+        assert_eq!(auth["tokens"]["access_token"], "access");
+        assert_eq!(auth["tokens"]["refresh_token"], "refresh");
+        assert_eq!(auth["tokens"]["id_token"], "identity");
+        assert!(auth.get("access_token").is_none());
+        assert!(auth.get("type").is_none());
+    }
 
     #[test]
     fn oauth_authorize_url_matches_the_codex_cli_contract() {

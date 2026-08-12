@@ -283,7 +283,8 @@ pub(crate) fn fetch_account_usage(
         authentication_invalidated: false,
     })?;
     let access_token = auth
-        .get("access_token")
+        .get("tokens")
+        .and_then(|tokens| tokens.get("access_token"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|token| !token.is_empty())

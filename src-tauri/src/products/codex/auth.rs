@@ -119,7 +119,8 @@ pub(crate) fn open_codex_cli_with_profile_internal(
 pub(crate) fn codex_access_token(auth_json: &str) -> Result<String, String> {
     serde_json::from_str::<Value>(auth_json)
         .map_err(|_| "存档的 auth.json 已损坏。".to_string())?
-        .get("access_token")
+        .get("tokens")
+        .and_then(|tokens| tokens.get("access_token"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|token| !token.is_empty())
