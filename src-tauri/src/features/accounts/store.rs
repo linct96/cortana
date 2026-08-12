@@ -839,6 +839,7 @@ pub(crate) fn upsert_relay_profile(
     get_profile_summary(&connection, &id, active_id.as_deref())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_relay_profile_internal(
     state: &AppState,
     profile_id: &str,
