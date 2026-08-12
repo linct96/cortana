@@ -36,6 +36,16 @@ function runPnpm(args) {
   return run('pnpm', args, { shell: process.platform === 'win32' });
 }
 
+function runChecks() {
+  runPnpm(['--filter', '@cortana/desktop', 'exec', 'oxfmt', '--check', '.']);
+  runPnpm(['--filter', '@cortana/desktop', 'exec', 'oxlint', 'src']);
+  runPnpm(['--filter', '@cortana/desktop', 'exec', 'vitest', 'run']);
+  runPnpm(['--filter', '@cortana/desktop', 'build:web']);
+  run('cargo', ['fmt', '--manifest-path', 'src-tauri/Cargo.toml', '--', '--check']);
+  run('cargo', ['clippy', '--manifest-path', 'src-tauri/Cargo.toml', '--all-targets', '--', '-D', 'warnings']);
+  run('cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml']);
+}
+
 function versionParts(version) {
   if (typeof version !== 'string') return null;
   const match = version.match(versionPattern);
@@ -125,16 +135,8 @@ async function main() {
   }
 
   const state = readVersions();
-  const version = args[0] || (await chooseVersion(state.currentVersion));
-  if (!version) {
-    console.log('已取消发布。');
-    return;
-  }
-  if (!versionParts(version)) {
+  if (args[0] && !versionParts(args[0])) {
     throw new Error('版本号格式错误，应为 X.Y.Z。');
-  }
-  if (compareVersions(version, state.currentVersion) <= 0) {
-    throw new Error(`新版本 ${version} 必须高于当前版本 ${state.currentVersion}。`);
   }
 
   if (run('git', ['branch', '--show-current'], { capture: true }) !== 'main') {
@@ -152,6 +154,17 @@ async function main() {
     throw new Error('本地 main 与 origin/main 不一致，请先同步。');
   }
 
+  runChecks();
+
+  const version = args[0] || (await chooseVersion(state.currentVersion));
+  if (!version) {
+    console.log('已取消发布。');
+    return;
+  }
+  if (compareVersions(version, state.currentVersion) <= 0) {
+    throw new Error(`新版本 ${version} 必须高于当前版本 ${state.currentVersion}。`);
+  }
+
   const tag = `v${version}`;
   if (
     run('git', ['tag', '--list', tag], { capture: true }) ||
@@ -167,9 +180,6 @@ async function main() {
     writeFileSync(file, `${JSON.stringify(document, null, 2)}\n`);
   }
   writeFileSync(cargoFile, state.cargo.replace(state.cargoMatch[0], `version = "${version}"`));
-
-  runPnpm(['--filter', '@cortana/desktop', 'build:web']);
-  run('cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml']);
 
   run('git', [
     'add',
