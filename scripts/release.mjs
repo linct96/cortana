@@ -180,6 +180,7 @@ async function main() {
     writeFileSync(file, `${JSON.stringify(document, null, 2)}\n`);
   }
   writeFileSync(cargoFile, state.cargo.replace(state.cargoMatch[0], `version = "${version}"`));
+  run('cargo', ['check', '--manifest-path', 'src-tauri/Cargo.toml']);
 
   run('git', [
     'add',
@@ -189,7 +190,7 @@ async function main() {
     'src-tauri/Cargo.lock',
     'src-tauri/tauri.conf.json',
   ]);
-  run('git', ['commit', '-m', `chore(release): ${tag}`]);
+  run('git', ['commit', '-m', `chore(release): 发布 ${tag}`]);
   run('git', ['tag', '-a', tag, '-m', `Cortana ${tag}`]);
   run('git', ['push', '--atomic', 'origin', 'main', tag]);
 
