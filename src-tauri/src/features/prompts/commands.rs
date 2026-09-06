@@ -32,6 +32,7 @@ fn instruction_path(state: &AppState, product: AccountProduct) -> Result<PathBuf
             .join("CLAUDE.md"),
         AccountProduct::Antigravity => user_home.join(".gemini/GEMINI.md"),
         AccountProduct::Grok => environment::grok_home(state).join("AGENTS.md"),
+        AccountProduct::Pi => return Err("Pi 一期不支持提示词管理。".to_string()),
     })
 }
 
@@ -40,6 +41,7 @@ fn instruction_filename(product: AccountProduct) -> &'static str {
         AccountProduct::Claude => "CLAUDE.md",
         AccountProduct::Antigravity => "GEMINI.md",
         AccountProduct::Codex | AccountProduct::Grok => "AGENTS.md",
+        AccountProduct::Pi => "AGENTS.md",
     }
 }
 

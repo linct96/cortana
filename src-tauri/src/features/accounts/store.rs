@@ -77,7 +77,7 @@ pub(crate) fn list_profiles_for_product(
     active_id: Option<&str>,
 ) -> Result<Vec<ProfileSummary>, String> {
     let mut statement = connection
-        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json, oauth_invalidated_at, upstream_protocol, upstream_auth_mode, anthropic_max_tokens FROM accounts WHERE product = ?1 AND (?1 <> 'antigravity' OR account_type = 'oauth') ORDER BY sort_order ASC, created_at ASC")
+        .prepare("SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json, oauth_invalidated_at, upstream_protocol, upstream_auth_mode, anthropic_max_tokens, provider_key FROM accounts WHERE product = ?1 AND (?1 <> 'antigravity' OR account_type = 'oauth') ORDER BY sort_order ASC, created_at ASC")
         .map_err(database_error)?;
     let rows = statement
         .query_map(params![product.as_str()], |row| {
@@ -116,6 +116,7 @@ pub(crate) fn profile_summary_from_row(
         is_active: active_id == Some(id.as_str()),
         id,
         product,
+        provider_key: row.get(23)?,
         account_type: row.get(1)?,
         api_base_url: row.get(2)?,
         upstream_protocol: row.get(20)?,
@@ -162,7 +163,7 @@ pub(crate) fn get_profile_summary_for_product(
 ) -> Result<ProfileSummary, String> {
     connection
         .query_row(
-            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json, oauth_invalidated_at, upstream_protocol, upstream_auth_mode, anthropic_max_tokens FROM accounts WHERE id = ?1 AND product = ?2 AND (?2 <> 'antigravity' OR account_type = 'oauth')",
+            "SELECT id, account_type, api_base_url, account_id, email, alias, plan_type, usage_primary_percent, usage_primary_window_minutes, usage_primary_resets_at, usage_secondary_percent, usage_secondary_window_minutes, usage_secondary_resets_at, usage_updated_at, last_used_at, updated_at, reset_credits_available_count, antigravity_quota_json, auth_json, oauth_invalidated_at, upstream_protocol, upstream_auth_mode, anthropic_max_tokens, provider_key FROM accounts WHERE id = ?1 AND product = ?2 AND (?2 <> 'antigravity' OR account_type = 'oauth')",
             params![profile_id, product.as_str()],
             |row| profile_summary_from_row(row, product, active_id),
         )
@@ -217,6 +218,7 @@ pub(crate) fn relay_api_key_for_profile(
         AccountProduct::Antigravity => {
             return Err("Antigravity 仅支持浏览器 OAuth 账户。".to_string());
         }
+        AccountProduct::Pi => return Err("Pi 一期不支持中转站账户。".to_string()),
     };
     auth.get(field)
         .and_then(Value::as_str)
@@ -243,6 +245,7 @@ pub(crate) fn detected_profile_from_auth(
     Ok(Some(ProfileSummary {
         id: "detected".to_string(),
         product: AccountProduct::Codex,
+        provider_key: String::new(),
         account_type: ACCOUNT_TYPE_OAUTH.to_string(),
         api_base_url: None,
         upstream_protocol: "openaiResponses".to_string(),
@@ -293,6 +296,7 @@ fn detected_relay_profile(
     ProfileSummary {
         id: "detected".to_string(),
         product: AccountProduct::Codex,
+        provider_key: String::new(),
         account_type: ACCOUNT_TYPE_RELAY.to_string(),
         api_base_url,
         upstream_protocol: "openaiResponses".to_string(),

@@ -40,6 +40,7 @@ pub(crate) enum AccountProduct {
     Claude,
     Antigravity,
     Grok,
+    Pi,
 }
 
 impl AccountProduct {
@@ -49,6 +50,7 @@ impl AccountProduct {
             Self::Claude => "claude",
             Self::Antigravity => "antigravity",
             Self::Grok => "grok",
+            Self::Pi => "pi",
         }
     }
 
@@ -58,6 +60,7 @@ impl AccountProduct {
             Self::Claude => "Claude",
             Self::Antigravity => "Antigravity",
             Self::Grok => "Grok",
+            Self::Pi => "Pi",
         }
     }
 }
@@ -89,6 +92,7 @@ pub(crate) struct PendingOAuth {
 pub(crate) struct ProfileSummary {
     pub(crate) id: String,
     pub(crate) product: AccountProduct,
+    pub(crate) provider_key: String,
     pub(crate) account_type: String,
     pub(crate) api_base_url: Option<String>,
     pub(crate) upstream_protocol: String,
@@ -285,4 +289,19 @@ pub(crate) struct Identity {
     pub(crate) name: String,
     pub(crate) email: String,
     pub(crate) plan_type: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AccountProduct;
+
+    #[test]
+    fn pi_product_uses_stable_storage_name() {
+        assert_eq!(AccountProduct::Pi.as_str(), "pi");
+        assert_eq!(AccountProduct::Pi.display_name(), "Pi");
+        assert_eq!(
+            serde_json::to_string(&AccountProduct::Pi).unwrap(),
+            "\"pi\""
+        );
+    }
 }

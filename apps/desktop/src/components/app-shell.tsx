@@ -15,11 +15,8 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import antigravityIcon from '../assets/antigravity.svg';
-import chatGptIcon from '../assets/chatgpt.svg';
-import claudeIcon from '../assets/claude.svg';
-import grokIcon from '../assets/grok.svg';
 import { invoke, isTauri } from '../backend';
+import { PRODUCT_ORDER, productMeta, productSupportsPath } from '../products';
 import { appError, cn } from '../utils';
 import { AppSidebar, SidebarNavItem } from './app-sidebar';
 import {
@@ -45,6 +42,7 @@ export function AppShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const previousMainPath = useRef<MainPath>('/accounts');
   const [activeProduct, setActiveProduct] = useState<AccountProduct>('codex');
+  const [activeProductReady, setActiveProductReady] = useState(false);
   const [cliAvailable, setCliAvailable] = useState<boolean | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
@@ -56,7 +54,8 @@ export function AppShell() {
   useEffect(() => {
     invoke<AccountProduct>('get_active_product')
       .then(setActiveProduct)
-      .catch((error) => toast.error(appError(error)));
+      .catch((error) => toast.error(appError(error)))
+      .finally(() => setActiveProductReady(true));
   }, []);
 
   return (
@@ -74,14 +73,24 @@ export function AppShell() {
     >
       <div className="relative flex h-screen min-h-0 bg-background text-foreground">
         {isMacOS && <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-40 h-10" />}
-        <Outlet />
+        {activeProductReady && <Outlet />}
       </div>
     </AppShellContext.Provider>
   );
 }
 
 export function MainLayout() {
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
   const { topPadding, activeProduct } = useAppShell();
+  const capabilities = productMeta(activeProduct).capabilities;
+
+  useEffect(() => {
+    const path = mainPathFor(pathname);
+    if (path && !productSupportsPath(activeProduct, path)) {
+      void navigate({ to: '/accounts', replace: true, ignoreBlocker: true });
+    }
+  }, [activeProduct, navigate, pathname]);
 
   return (
     <>
@@ -92,15 +101,17 @@ export function MainLayout() {
         navigation={
           <>
             <SidebarNavItem to="/accounts" label="账号" icon={UsersRound} />
-            <SidebarNavItem to="/analytics" label="统计分析" icon={ChartNoAxesCombined} />
-            <SidebarNavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
-            <SidebarNavItem to="/prompts" label="提示词管理" icon={FileText} />
-            {(activeProduct === 'codex' ||
-              activeProduct === 'claude' ||
-              activeProduct === 'grok') && (
-              <SidebarNavItem to="/models" label="自定义模型" icon={Boxes} />
+            {capabilities.analytics && (
+              <SidebarNavItem to="/analytics" label="统计分析" icon={ChartNoAxesCombined} />
             )}
-            <SidebarNavItem to="/config" label="配置" icon={FileCog} />
+            {capabilities.sessions && (
+              <SidebarNavItem to="/sessions" label="会话管理" icon={MessagesSquare} />
+            )}
+            {capabilities.prompts && (
+              <SidebarNavItem to="/prompts" label="提示词管理" icon={FileText} />
+            )}
+            {capabilities.models && <SidebarNavItem to="/models" label="自定义模型" icon={Boxes} />}
+            {capabilities.config && <SidebarNavItem to="/config" label="配置" icon={FileCog} />}
           </>
         }
         footer={<SidebarNavItem to="/settings/general" label="设置" icon={Settings} />}
@@ -117,12 +128,14 @@ export function AppContent({ children }: { children: ReactNode }) {
 
   return (
     <div className={cn('flex min-w-0 flex-1 flex-col', topPadding)}>
-      <CliAlert
-        key={activeProduct}
-        product={activeProduct}
-        available={cliAvailable}
-        onAvailableChange={setCliAvailable}
-      />
+      {productMeta(activeProduct).capabilities.showCliAlert && (
+        <CliAlert
+          key={activeProduct}
+          product={activeProduct}
+          available={cliAvailable}
+          onAvailableChange={setCliAvailable}
+        />
+      )}
       <div className="min-h-0 flex-1">{children}</div>
     </div>
   );
@@ -131,9 +144,7 @@ export function AppContent({ children }: { children: ReactNode }) {
 function ProductMenu() {
   const navigate = useNavigate();
   const { activeProduct, setActiveProduct, setCliAvailable, hasUnsavedChanges } = useAppShell();
-  const claude = activeProduct === 'claude';
-  const antigravity = activeProduct === 'antigravity';
-  const grok = activeProduct === 'grok';
+  const activeMeta = productMeta(activeProduct);
 
   async function selectProduct(product: AccountProduct) {
     if (product === activeProduct) return;
@@ -160,38 +171,22 @@ function ProductMenu() {
           />
         }
       >
-        <img
-          src={claude ? claudeIcon : antigravity ? antigravityIcon : grok ? grokIcon : chatGptIcon}
-          alt=""
-          className="size-5 shrink-0"
-        />
-        <strong className="truncate text-base font-semibold">
-          {claude ? 'Claude' : antigravity ? 'Antigravity' : grok ? 'Grok' : 'Codex'}
-        </strong>
+        <img src={activeMeta.icon} alt="" className="size-5 shrink-0" />
+        <strong className="truncate text-base font-semibold">{activeMeta.name}</strong>
         <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
       </DropdownMenuTrigger>
       <DropdownMenuContent sideOffset={4}>
         <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => void selectProduct('antigravity')}>
-            <img src={antigravityIcon} alt="" className="size-4" />
-            Antigravity
-            {antigravity && <Check className="ml-auto" />}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void selectProduct('claude')}>
-            <img src={claudeIcon} alt="" className="size-4" />
-            Claude
-            {claude && <Check className="ml-auto" />}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void selectProduct('codex')}>
-            <img src={chatGptIcon} alt="" className="size-4" />
-            Codex
-            {activeProduct === 'codex' && <Check className="ml-auto" />}
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void selectProduct('grok')}>
-            <img src={grokIcon} alt="" className="size-4" />
-            Grok
-            {grok && <Check className="ml-auto" />}
-          </DropdownMenuItem>
+          {PRODUCT_ORDER.map((product) => {
+            const meta = productMeta(product);
+            return (
+              <DropdownMenuItem key={product} onClick={() => void selectProduct(product)}>
+                <img src={meta.icon} alt="" className="size-4" />
+                {meta.name}
+                {activeProduct === product && <Check className="ml-auto" />}
+              </DropdownMenuItem>
+            );
+          })}
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>

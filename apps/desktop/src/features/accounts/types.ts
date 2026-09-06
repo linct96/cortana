@@ -3,6 +3,7 @@ import type { AccountProduct } from '../../components/app-shell-context';
 export type Profile = {
   id: string;
   product: AccountProduct;
+  providerKey: string;
   accountType: 'oauth' | 'relay';
   apiBaseUrl: string | null;
   upstreamProtocol: UpstreamProtocol;
@@ -24,7 +25,10 @@ export type Profile = {
   updatedAt: number;
 };
 
-export type UpstreamProtocol = 'openaiResponses' | 'openaiChatCompletions' | 'anthropicMessages';
+export type UpstreamProtocol =
+  | 'openaiResponses'
+  | 'openaiChatCompletions'
+  | 'anthropicMessages';
 export type UpstreamAuthMode = 'bearer' | 'xApiKey';
 
 export type CodexGatewayStatus = {
@@ -67,7 +71,11 @@ export type ResetCredits = {
   credits: ResetCredit[];
 };
 
-export type ResetCreditConsumeOutcome = 'reset' | 'alreadyRedeemed' | 'nothingToReset' | 'noCredit';
+export type ResetCreditConsumeOutcome =
+  | 'reset'
+  | 'alreadyRedeemed'
+  | 'nothingToReset'
+  | 'noCredit';
 
 export type ResetCreditConsumeResult = {
   outcome: ResetCreditConsumeOutcome;
@@ -85,7 +93,10 @@ export function resetCreditOutcomeNotice(outcome: ResetCreditConsumeOutcome): {
     case 'alreadyRedeemed':
       return { kind: 'success', message: '重置已完成，额度已刷新。' };
     case 'nothingToReset':
-      return { kind: 'info', message: '当前没有可重置的额度窗口，重置卡未消耗。' };
+      return {
+        kind: 'info',
+        message: '当前没有可重置的额度窗口，重置卡未消耗。',
+      };
     case 'noCredit':
       return { kind: 'info', message: '已无可用重置卡。' };
   }
@@ -126,7 +137,8 @@ export type UsageWindow = {
 export function usageWindowLabel(minutes: number | null) {
   if (minutes === 300) return '5h额度';
   if (minutes === 10_080) return '周额度';
-  if (minutes !== null && minutes >= 28 * 1_440 && minutes <= 32 * 1_440) return '月额度';
+  if (minutes !== null && minutes >= 28 * 1_440 && minutes <= 32 * 1_440)
+    return '月额度';
   return '剩余额度';
 }
 
@@ -144,7 +156,13 @@ export type AppStatus = {
 };
 
 export type OAuthProgress = {
-  stage: 'browser_opening' | 'waiting' | 'exchanging' | 'success' | 'error' | 'cancelled';
+  stage:
+    | 'browser_opening'
+    | 'waiting'
+    | 'exchanging'
+    | 'success'
+    | 'error'
+    | 'cancelled';
   message: string;
   profile: Profile | null;
 };
@@ -155,6 +173,8 @@ export type PendingConfirm =
   | { kind: 'force-grok-edit'; profile: Profile }
   | { kind: 'enable-gateway'; profile: Profile; action: 'switch' | 'open-cli' }
   | null;
+
+export type PiRelayModel = { id: string; name: string };
 
 export type AddMode = 'browser' | 'paste' | 'relay';
 

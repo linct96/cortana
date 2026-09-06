@@ -8,8 +8,9 @@ pub(crate) use crate::products::codex::{
 pub(crate) use commands::set_account_usage_refresh_settings as set_usage_refresh_settings;
 pub(crate) use commands::{
     active_product, add_relay_profile, delete_profile, get_active_product, get_app_status,
-    get_codex_gateway_mode, get_profile_auth, get_relay_api_key, get_usage_refresh_settings,
-    import_current_profile, open_codex_cli_with_profile, refresh_due_profile_usage,
+    get_codex_gateway_mode, get_pi_relay_models, get_profile_auth, get_relay_api_key,
+    get_usage_refresh_settings, import_codex_profile_to_pi, import_current_profile,
+    open_codex_cli_with_profile, probe_pi_relay_models, refresh_due_profile_usage,
     refresh_profile_usage, reorder_profiles, set_active_product, set_codex_gateway_mode,
     set_codex_home, set_grok_relay_enabled, switch_profile, update_profile, update_relay_profile,
 };

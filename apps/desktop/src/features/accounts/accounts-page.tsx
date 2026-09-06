@@ -22,9 +22,17 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '../../components/ui/empty';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '../../components/ui/tooltip';
 import { Switch } from '../../components/ui/switch';
-import { AddAccountDialog, ConfirmAccountDialog, EditAccountDialog } from './account-dialog';
+import {
+  AddAccountDialog,
+  ConfirmAccountDialog,
+  EditAccountDialog,
+} from './account-dialog';
 import { AccountBalance, AccountRow } from './account-list';
 import { AntigravityQuotaDialog } from './antigravity-quota-dialog';
 import { ResetCreditsDialog } from './reset-credits-dialog';
@@ -36,8 +44,14 @@ const statusStyles: Record<
   { icon: ComponentType<{ size?: number }>; iconClass: string }
 > = {
   managed: { icon: CircleCheck, iconClass: 'bg-primary/10 text-primary' },
-  unmanaged: { icon: CircleAlert, iconClass: 'bg-secondary text-secondary-foreground' },
-  missing: { icon: CircleAlert, iconClass: 'bg-secondary text-secondary-foreground' },
+  unmanaged: {
+    icon: CircleAlert,
+    iconClass: 'bg-secondary text-secondary-foreground',
+  },
+  missing: {
+    icon: CircleAlert,
+    iconClass: 'bg-secondary text-secondary-foreground',
+  },
 };
 
 export default function AccountsPage() {
@@ -54,42 +68,52 @@ function ProductAccountsPage({ product }: { product: AccountProduct }) {
         title="账号"
         actions={
           <>
-            {product === 'codex' && (
+            {account.capabilities.gateway && (
               <label className="flex items-center gap-2 text-sm font-medium">
                 网关模式
                 <Switch
                   checked={account.gatewayStatus?.enabled ?? false}
-                  onCheckedChange={(enabled) => void account.setGatewayMode(enabled)}
-                  disabled={account.busy === 'gateway' || !account.gatewayStatus}
+                  onCheckedChange={(enabled) =>
+                    void account.setGatewayMode(enabled)
+                  }
+                  disabled={
+                    account.busy === 'gateway' || !account.gatewayStatus
+                  }
                 />
               </label>
             )}
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex" />}>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  type="button"
-                  onClick={() => void account.refreshAllAccounts()}
-                  disabled={account.loading || account.busy === 'refresh:all'}
-                >
-                  <RefreshCw
-                    size={18}
-                    className={
-                      account.loading || account.busy === 'refresh:all' ? 'animate-spin' : ''
-                    }
-                  />
-                  <span className="sr-only">刷新</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {account.product === 'claude' ? '更新全部登录令牌' : '刷新全部'}
-              </TooltipContent>
-            </Tooltip>
+            {account.capabilities.refreshAllAccounts && (
+              <Tooltip>
+                <TooltipTrigger render={<span className="inline-flex" />}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    type="button"
+                    onClick={() => void account.refreshAllAccounts()}
+                    disabled={account.loading || account.busy === 'refresh:all'}
+                  >
+                    <RefreshCw
+                      size={18}
+                      className={
+                        account.loading || account.busy === 'refresh:all'
+                          ? 'animate-spin'
+                          : ''
+                      }
+                    />
+                    <span className="sr-only">刷新</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {account.product === 'claude'
+                    ? '更新全部登录令牌'
+                    : '刷新全部'}
+                </TooltipContent>
+              </Tooltip>
+            )}
             <Button
               type="button"
-              onClick={() => account.setAddOpen(true)}
-              disabled={account.busy === 'oauth' || account.busy === 'import'}
+              onClick={() => void account.openAddDialog()}
+              disabled={account.busy !== null}
             >
               <Plus data-icon="inline-start" /> 添加账号
             </Button>
@@ -101,7 +125,11 @@ function ProductAccountsPage({ product }: { product: AccountProduct }) {
   );
 }
 
-function AccountContent({ account }: { account: ReturnType<typeof useAccountManager> }) {
+function AccountContent({
+  account,
+}: {
+  account: ReturnType<typeof useAccountManager>;
+}) {
   if (!account.status) return null;
 
   const enabledGrokRelays =
@@ -110,14 +138,21 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           (profile) => profile.accountType === 'relay' && profile.isActive,
         )
       : [];
-  const authInfo = account.status ? statusStyles[account.status.authState.kind] : null;
+  const authInfo = account.status
+    ? statusStyles[account.status.authState.kind]
+    : null;
   const AuthIcon = authInfo?.icon ?? CircleAlert;
-  const statusTone = authInfo?.iconClass ?? 'bg-secondary text-secondary-foreground';
+  const statusTone =
+    authInfo?.iconClass ?? 'bg-secondary text-secondary-foreground';
 
   return (
     <>
       <div className="mt-7 w-full px-4 sm:px-8 lg:px-12">
-        <Card size="sm" className="w-full" aria-label={`当前 ${productName(account.product)} 状态`}>
+        <Card
+          size="sm"
+          className="w-full"
+          aria-label={`当前 ${productName(account.product)} 状态`}
+        >
           <CardContent className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-center gap-(--card-spacing)">
             <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 xl:grid-cols-[auto_minmax(0,1fr)_auto]">
               <span
@@ -135,13 +170,18 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                       ? `已启用 ${enabledGrokRelays.length} 个中转账号`
                       : (account.activeProfile?.alias ?? '尚未选择账户')}
                   </strong>
-                  {!enabledGrokRelays.length && account.activeProfile?.planType && (
-                    <Badge variant="outline">{planLabel(account.activeProfile.planType)}</Badge>
-                  )}
+                  {!enabledGrokRelays.length &&
+                    account.activeProfile?.planType && (
+                      <Badge variant="outline">
+                        {planLabel(account.activeProfile.planType)}
+                      </Badge>
+                    )}
                 </div>
                 {enabledGrokRelays.length > 0 && (
                   <span className="block truncate text-sm text-muted-foreground">
-                    {enabledGrokRelays.map((profile) => profile.alias).join('、')}
+                    {enabledGrokRelays
+                      .map((profile) => profile.alias)
+                      .join('、')}
                   </span>
                 )}
                 {!account.activeProfile && (
@@ -151,11 +191,13 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                       : account.status?.authState.kind === 'missing'
                         ? account.product === 'claude'
                           ? '未检测到 settings.json 中的 Claude 凭据'
-                          : '未检测到 auth.json'
+                          : account.product === 'pi'
+                            ? '请先在 Pi 中运行 /login 并登录 OpenAI (ChatGPT Plus/Pro)'
+                            : '未检测到 auth.json'
                         : '导入当前登录态后即可管理'}
                   </span>
                 )}
-                {(account.product === 'claude' || account.product === 'antigravity') &&
+                {account.capabilities.showAuthPath &&
                   account.status?.authPath && (
                     <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
                       {account.status.authPath}
@@ -165,7 +207,8 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
               {account.status &&
                 account.status.authState.kind !== 'managed' &&
                 account.status.authState.kind !== 'missing' &&
-                ((account.product !== 'claude' && account.product !== 'antigravity') ||
+                ((account.product !== 'claude' &&
+                  account.product !== 'antigravity') ||
                   account.status.detectedProfile) && (
                   <Button
                     variant="secondary"
@@ -179,33 +222,39 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                     ) : (
                       <LogIn />
                     )}
-                    {account.status.detectedProfile ? '同步该账号' : '导入当前状态'}
+                    {account.status.detectedProfile
+                      ? '同步该账号'
+                      : '导入当前状态'}
                   </Button>
                 )}
             </div>
-            {account.product !== 'claude' &&
-              account.product !== 'antigravity' &&
+            {account.capabilities.usage &&
               account.activeProfile?.accountType === 'oauth' &&
               !account.status?.detectedProfile && (
                 <div className="min-w-0 border-l pl-(--card-spacing)">
                   <AccountBalance
                     profile={account.activeProfile}
                     isRefreshing={
-                      account.loading || account.busy === `refresh:${account.activeProfile.id}`
+                      account.loading ||
+                      account.busy === `refresh:${account.activeProfile.id}`
                     }
-                    onRefresh={() => void account.refreshAccount(account.activeProfile!)}
+                    onRefresh={() =>
+                      void account.refreshAccount(account.activeProfile!)
+                    }
                   />
                 </div>
               )}
-            {account.product !== 'grok' &&
-              account.product !== 'antigravity' &&
+            {account.capabilities.relay &&
+              account.product !== 'grok' &&
               account.activeProfile?.accountType === 'relay' &&
               account.activeProfile.apiBaseUrl && (
                 <div className="min-w-0 border-l pl-(--card-spacing)">
                   <div className="flex min-w-0 flex-1 items-center gap-3">
                     <Server className="shrink-0 text-muted-foreground" />
                     <div className="min-w-0">
-                      <strong className="block text-sm font-medium">中转站 API</strong>
+                      <strong className="block text-sm font-medium">
+                        中转站 API
+                      </strong>
                       <span className="block truncate text-sm text-muted-foreground">
                         {account.activeProfile.apiBaseUrl}
                       </span>
@@ -222,7 +271,9 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           {account.status.profiles.length ? (
             <DragDropProvider
               onDragEnd={(event) =>
-                void account.reorderProfiles(move(account.status!.profiles, event))
+                void account.reorderProfiles(
+                  move(account.status!.profiles, event),
+                )
               }
             >
               <div className="flex w-full flex-col gap-3 px-4 pt-2 pb-6 sm:px-8 lg:px-12">
@@ -252,36 +303,50 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                     onRefresh={() => void account.refreshAccount(profile)}
                     onEdit={() => void account.openEditor(profile)}
                     onViewQuota={() => account.setQuotaProfileId(profile.id)}
-                    onViewResetCredits={() => void account.viewResetCredits(profile)}
-                    onDelete={() => account.setConfirm({ kind: 'delete', profile })}
+                    onViewResetCredits={() =>
+                      void account.viewResetCredits(profile)
+                    }
+                    onDelete={() =>
+                      account.setConfirm({ kind: 'delete', profile })
+                    }
                   />
                 ))}
               </div>
             </DragDropProvider>
           ) : (
-            <EmptyState onAdd={() => account.setAddOpen(true)} />
+            <EmptyState
+              product={account.product}
+              onAdd={() => void account.openAddDialog()}
+              onImportCurrent={() => void account.importCurrent()}
+              importDisabled={account.status.authState.kind === 'missing'}
+            />
           )}
         </div>
       </section>
 
-      {account.addOpen && (
-        <AddAccountDialog
-          {...account}
-          onGenerateOAuth={account.generateOAuthLink}
-          onOpenOAuth={() => void account.openOAuthLink()}
-          onSubmit={account.submitAdd}
-          onClose={() =>
-            account.busy === 'oauth' ||
-            account.busy?.startsWith('oauth:') ||
-            Boolean(account.oauthUrl)
-              ? void account.cancelOAuth()
-              : account.busy !== 'auth-json' &&
-                account.busy !== 'relay' &&
-                account.busy !== 'import' &&
-                account.closeAddDialog()
-          }
-        />
-      )}
+      {(account.product === 'pi' ||
+        account.capabilities.browserOAuth ||
+        account.capabilities.pasteCredential ||
+        account.capabilities.relay) &&
+        account.addOpen && (
+          <AddAccountDialog
+            {...account}
+            onFetchPiRelayModels={account.fetchPiRelayModels}
+            onGenerateOAuth={account.generateOAuthLink}
+            onOpenOAuth={() => void account.openOAuthLink()}
+            onSubmit={account.submitAdd}
+            onClose={() =>
+              account.busy === 'oauth' ||
+              account.busy?.startsWith('oauth:') ||
+              Boolean(account.oauthUrl)
+                ? void account.cancelOAuth()
+                : account.busy !== 'auth-json' &&
+                  account.busy !== 'relay' &&
+                  account.busy !== 'import' &&
+                  account.closeAddDialog()
+            }
+          />
+        )}
       {account.editing && (
         <EditAccountDialog
           editing={account.editing}
@@ -290,6 +355,7 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           authJson={account.editingAuthJson}
           relayApiKey={account.editingRelayApiKey}
           relayApiBaseUrl={account.editingRelayApiBaseUrl}
+          relayModels={account.relayModels}
           upstreamProtocol={account.upstreamProtocol}
           upstreamAuthMode={account.upstreamAuthMode}
           anthropicMaxTokens={account.anthropicMaxTokens}
@@ -302,6 +368,7 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           setAuthJson={account.setEditingAuthJson}
           setRelayApiKey={account.setEditingRelayApiKey}
           setRelayApiBaseUrl={account.setEditingRelayApiBaseUrl}
+          setRelayModels={account.setRelayModels}
           setUpstreamProtocol={account.setUpstreamProtocol}
           setUpstreamAuthMode={account.setUpstreamAuthMode}
           setAnthropicMaxTokens={account.setAnthropicMaxTokens}
@@ -309,6 +376,7 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           setCustomModelEnabled={account.setCustomModelEnabled}
           setModelProfileId={account.setModelProfileId}
           setDefaultModelId={account.setDefaultModelId}
+          onFetchPiRelayModels={account.fetchPiRelayModels}
           onSubmit={account.saveProfile}
           onClose={account.closeEditor}
         />
@@ -344,7 +412,8 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                     )
                   : account.confirm?.kind === 'force-grok-edit'
                     ? void account.saveProfile(undefined, true)
-                    : account.confirm && void account.switchTo(account.confirm.profile, true)
+                    : account.confirm &&
+                      void account.switchTo(account.confirm.profile, true)
           }
         />
       )}
@@ -375,19 +444,57 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
   );
 }
 
-function EmptyState({ onAdd }: { onAdd?: () => void }) {
+function EmptyState({
+  product,
+  onAdd,
+  onImportCurrent,
+  importDisabled,
+}: {
+  product: AccountProduct;
+  onAdd?: () => void;
+  onImportCurrent?: () => void;
+  importDisabled?: boolean;
+}) {
+  const pi = product === 'pi';
   return (
     <Empty className="min-h-52 rounded-none border-y">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <LogIn />
         </EmptyMedia>
-        <EmptyTitle>还没有账户档案</EmptyTitle>
+        <EmptyTitle>{pi ? '尚未保存 Pi 账号' : '还没有账户档案'}</EmptyTitle>
       </EmptyHeader>
       <EmptyContent>
-        <Button variant="secondary" className="text-primary" type="button" onClick={onAdd}>
-          <Plus data-icon="inline-start" /> 添加账号
-        </Button>
+        {pi ? (
+          <>
+            <p className="max-w-md text-center text-sm text-muted-foreground">
+              从 Cortana 的 Codex 账号导入，或同步 Pi 当前登录的 OpenAI 账号。
+            </p>
+            <div className="flex gap-2">
+              <Button variant="secondary" type="button" onClick={onAdd}>
+                <Plus data-icon="inline-start" /> 添加账号
+              </Button>
+              <Button
+                variant="secondary"
+                className="text-primary"
+                type="button"
+                onClick={onImportCurrent}
+                disabled={importDisabled}
+              >
+                <LogIn data-icon="inline-start" /> 同步当前账号
+              </Button>
+            </div>
+          </>
+        ) : (
+          <Button
+            variant="secondary"
+            className="text-primary"
+            type="button"
+            onClick={onAdd}
+          >
+            <Plus data-icon="inline-start" /> 添加账号
+          </Button>
+        )}
       </EmptyContent>
     </Empty>
   );

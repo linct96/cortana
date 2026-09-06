@@ -13,10 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { Fragment } from 'react';
-import antigravityIcon from '../../assets/antigravity.svg';
-import chatGptIcon from '../../assets/chatgpt.svg';
-import claudeIcon from '../../assets/claude.svg';
-import grokIcon from '../../assets/grok.svg';
+import { productMeta } from '../../products';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import {
@@ -63,6 +60,7 @@ export function AccountRow({
   onViewResetCredits: () => void;
   onDelete: () => void;
 }) {
+  const capabilities = productMeta(profile.product).capabilities;
   const sortable = useSortable({
     id: profile.id,
     index,
@@ -94,15 +92,7 @@ export function AccountRow({
       <div className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary text-sm font-semibold text-primary">
         {profile.accountType === 'oauth' ? (
           <img
-            src={
-              profile.product === 'antigravity'
-                ? antigravityIcon
-                : profile.product === 'claude'
-                  ? claudeIcon
-                  : profile.product === 'grok'
-                    ? grokIcon
-                    : chatGptIcon
-            }
+            src={productMeta(profile.product === 'pi' ? 'codex' : profile.product).icon}
             alt=""
             className="size-5"
           />
@@ -176,7 +166,7 @@ export function AccountRow({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuGroup>
-              {profile.product === 'codex' && (
+              {capabilities.openCliFromAccount && (
                 <DropdownMenuItem onClick={onOpenCli} disabled={isOpeningCli}>
                   {isOpeningCli ? <LoaderCircle className="animate-spin" /> : <SquareTerminal />}
                   打开终端
@@ -185,7 +175,7 @@ export function AccountRow({
               <DropdownMenuItem onClick={onEdit}>
                 <Pencil /> 编辑
               </DropdownMenuItem>
-              {profile.accountType === 'oauth' && (
+              {profile.accountType === 'oauth' && capabilities.refreshAccount && (
                 <>
                   <DropdownMenuItem
                     onClick={onRefresh}
@@ -366,7 +356,7 @@ function AccountMeta({ profile, onViewQuota }: { profile: Profile; onViewQuota: 
   const items: { key: string; label: string; destructive?: boolean }[] = [];
   if (profile.accountType === 'relay') {
     if (profile.apiBaseUrl) items.push({ key: 'api', label: profile.apiBaseUrl });
-    if (profile.product === 'codex') {
+    if (profile.product === 'codex' || profile.product === 'pi') {
       items.push({
         key: 'protocol',
         label:
@@ -385,7 +375,7 @@ function AccountMeta({ profile, onViewQuota }: { profile: Profile; onViewQuota: 
       items.push({ key: 'reauthorize', label: '需重新授权' });
     }
   } else {
-    if (profile.product === 'grok' && profile.email) {
+    if ((profile.product === 'grok' || profile.product === 'pi') && profile.email) {
       items.push({ key: 'email', label: profile.email });
     }
     [profile.usagePrimary, profile.usageSecondary].forEach((window, index) => {
@@ -439,24 +429,26 @@ function MetaSeparatorItem({
 }: {
   label: string;
   destructive?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
 }) {
+  const className = cn(
+    'min-w-0 truncate text-left',
+    onClick && 'hover:text-foreground',
+    destructive && 'text-destructive',
+  );
   return (
     <>
       <Separator
         orientation="vertical"
         className="mx-2 h-3 w-px shrink-0 self-center bg-muted-foreground/30"
       />
-      <button
-        type="button"
-        className={cn(
-          'min-w-0 truncate text-left hover:text-foreground',
-          destructive && 'text-destructive',
-        )}
-        onClick={onClick}
-      >
-        {label}
-      </button>
+      {onClick ? (
+        <button type="button" className={className} onClick={onClick}>
+          {label}
+        </button>
+      ) : (
+        <span className={className}>{label}</span>
+      )}
     </>
   );
 }

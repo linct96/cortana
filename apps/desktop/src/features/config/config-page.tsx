@@ -23,7 +23,9 @@ type ConfigMetadata = {
   language: typeof toml | typeof json;
 };
 
-const configMetadata: Record<AccountProduct, ConfigMetadata> = {
+type ConfigProduct = Exclude<AccountProduct, 'pi'>;
+
+const configMetadata: Record<ConfigProduct, ConfigMetadata> = {
   codex: {
     title: 'Codex 配置',
     filename: 'config.toml',
@@ -82,7 +84,7 @@ const editorTheme = EditorView.theme({
   },
 });
 
-function configEditorExtensions(product: AccountProduct) {
+function configEditorExtensions(product: ConfigProduct) {
   const { filename, language } = configMetadata[product];
   return [
     StreamLanguage.define(language),
@@ -106,6 +108,7 @@ function configEditorExtensions(product: AccountProduct) {
 
 export default function ConfigPage() {
   const { activeProduct } = useAppShell();
+  if (activeProduct === 'pi') return null;
   return (
     <PageShell className="flex flex-col">
       <PageHeader title={configMetadata[activeProduct].title} />
@@ -114,7 +117,7 @@ export default function ConfigPage() {
   );
 }
 
-function ConfigContent({ product }: { product: AccountProduct }) {
+function ConfigContent({ product }: { product: ConfigProduct }) {
   const [config, setConfig] = useState<ConfigFile | null>(null);
   const [content, setContent] = useState('');
   const [savedContent, setSavedContent] = useState('');
