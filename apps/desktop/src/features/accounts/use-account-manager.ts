@@ -25,9 +25,7 @@ import type {
 export function useAccountManager(product: AccountProduct) {
   const capabilities = productMeta(product).capabilities;
   const [status, setStatus] = useState<AppStatus | null>(null);
-  const [gatewayStatus, setGatewayStatus] = useState<CodexGatewayStatus | null>(
-    null,
-  );
+  const [gatewayStatus, setGatewayStatus] = useState<CodexGatewayStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -39,15 +37,11 @@ export function useAccountManager(product: AccountProduct) {
   const [relayApiKey, setRelayApiKey] = useState('');
   const [relayApiBaseUrl, setRelayApiBaseUrl] = useState('');
   const [relayModels, setRelayModels] = useState<PiRelayModel[]>([]);
-  const [upstreamProtocol, setUpstreamProtocol] =
-    useState<UpstreamProtocol>('openaiResponses');
-  const [upstreamAuthMode, setUpstreamAuthMode] =
-    useState<UpstreamAuthMode>('bearer');
+  const [upstreamProtocol, setUpstreamProtocol] = useState<UpstreamProtocol>('openaiResponses');
+  const [upstreamAuthMode, setUpstreamAuthMode] = useState<UpstreamAuthMode>('bearer');
   const [anthropicMaxTokens, setAnthropicMaxTokens] = useState(16_384);
   const [showRelayApiKey, setShowRelayApiKey] = useState(false);
-  const [modelStatus, setModelStatus] = useState<ModelProfilesStatus | null>(
-    null,
-  );
+  const [modelStatus, setModelStatus] = useState<ModelProfilesStatus | null>(null);
   const [customModelEnabled, setCustomModelEnabled] = useState(false);
   const [modelProfileId, setModelProfileId] = useState<string | null>(null);
   const [defaultModelId, setDefaultModelId] = useState<string | null>(null);
@@ -61,8 +55,7 @@ export function useAccountManager(product: AccountProduct) {
   const [editingRelayApiBaseUrl, setEditingRelayApiBaseUrl] = useState('');
   const [showEditingRelayApiKey, setShowEditingRelayApiKey] = useState(false);
   const [confirm, setConfirm] = useState<PendingConfirm>(null);
-  const [resetCreditsProfile, setResetCreditsProfile] =
-    useState<Profile | null>(null);
+  const [resetCreditsProfile, setResetCreditsProfile] = useState<Profile | null>(null);
   const [resetCredits, setResetCredits] = useState<ResetCredits | null>(null);
   const [quotaProfileId, setQuotaProfileId] = useState<string | null>(null);
   const refreshRequestRef = useRef(0);
@@ -75,8 +68,7 @@ export function useAccountManager(product: AccountProduct) {
         const next = await invoke<AppStatus>('get_app_status', { product });
         if (request === refreshRequestRef.current) setStatus(next);
       } catch (error) {
-        if (showError && request === refreshRequestRef.current)
-          toast.error(appError(error));
+        if (showError && request === refreshRequestRef.current) toast.error(appError(error));
       } finally {
         if (request === refreshRequestRef.current) setLoading(false);
       }
@@ -90,9 +82,7 @@ export function useAccountManager(product: AccountProduct) {
       return;
     }
     try {
-      setGatewayStatus(
-        await invoke<CodexGatewayStatus>('get_codex_gateway_mode'),
-      );
+      setGatewayStatus(await invoke<CodexGatewayStatus>('get_codex_gateway_mode'));
     } catch (error) {
       toast.error(appError(error));
     }
@@ -141,9 +131,7 @@ export function useAccountManager(product: AccountProduct) {
     void refreshGateway();
     void refreshModels();
     const statusTimer =
-      product === 'codex'
-        ? window.setInterval(() => void refresh(false), 10_000)
-        : undefined;
+      product === 'codex' ? window.setInterval(() => void refresh(false), 10_000) : undefined;
     if (product === 'codex') {
       void invoke('refresh_due_profile_usage', { immediate: true })
         .then(() => refresh(false))
@@ -166,11 +154,7 @@ export function useAccountManager(product: AccountProduct) {
     stopOAuthProgress();
     oauthCleanupRef.current = await listenOAuthProgress<OAuthProgress>(
       (payload) => {
-        setOauthMessage(
-          payload.stage === 'waiting' && product !== 'grok'
-            ? null
-            : payload.message,
-        );
+        setOauthMessage(payload.stage === 'waiting' && product !== 'grok' ? null : payload.message);
         if (payload.stage === 'exchanging') {
           setBusy('oauth:complete');
         } else if (payload.stage === 'success') {
@@ -178,9 +162,7 @@ export function useAccountManager(product: AccountProduct) {
           setBusy(null);
           closeAddDialog();
           toast.success(payload.message);
-          void (payload.profile
-            ? refreshNewAccount(payload.profile)
-            : refresh());
+          void (payload.profile ? refreshNewAccount(payload.profile) : refresh());
         } else if (payload.stage === 'error') {
           stopOAuthProgress();
           setBusy(null);
@@ -200,9 +182,7 @@ export function useAccountManager(product: AccountProduct) {
   }
 
   const activeProfile =
-    status?.detectedProfile ??
-    status?.profiles.find((profile) => profile.isActive) ??
-    null;
+    status?.detectedProfile ?? status?.profiles.find((profile) => profile.isActive) ?? null;
 
   async function openAddDialog() {
     if (product !== 'pi') {
@@ -215,9 +195,7 @@ export function useAccountManager(product: AccountProduct) {
       const codex = await invoke<AppStatus>('get_app_status', {
         product: 'codex',
       });
-      const profiles = codex.profiles.filter(
-        (profile) => profile.accountType === 'oauth',
-      );
+      const profiles = codex.profiles.filter((profile) => profile.accountType === 'oauth');
       setCodexProfiles(profiles);
       setSelectedCodexProfileId(profiles[0]?.id ?? '');
     } catch (error) {
@@ -285,9 +263,7 @@ export function useAccountManager(product: AccountProduct) {
         (product !== 'claude' || profile.isRenewable),
     );
     if (!profiles.length) {
-      toast.info(
-        product === 'claude' ? '没有可更新的登录令牌。' : '没有可刷新的账户。',
-      );
+      toast.info(product === 'claude' ? '没有可更新的登录令牌。' : '没有可刷新的账户。');
       return;
     }
     setBusy('refresh:all');
@@ -301,17 +277,9 @@ export function useAccountManager(product: AccountProduct) {
     await refresh();
     const failed = results.filter((result) => result.status === 'rejected');
     if (failed.length)
-      toast.error(
-        `${failed.length} 个账户${product === 'claude' ? '令牌更新' : '信息刷新'}失败。`,
-      );
-    else if (
-      results.some(
-        (result) => result.status === 'fulfilled' && result.value.refreshed,
-      )
-    )
-      toast.success(
-        product === 'claude' ? '登录令牌已更新。' : '账户信息已刷新。',
-      );
+      toast.error(`${failed.length} 个账户${product === 'claude' ? '令牌更新' : '信息刷新'}失败。`);
+    else if (results.some((result) => result.status === 'fulfilled' && result.value.refreshed))
+      toast.success(product === 'claude' ? '登录令牌已更新。' : '账户信息已刷新。');
     else toast.info('账户信息刚刚已刷新。');
     setBusy(null);
   }
@@ -381,14 +349,11 @@ export function useAccountManager(product: AccountProduct) {
     if (!resetCreditsProfile) return false;
     setBusy(`consume-reset-credit:${creditId}`);
     try {
-      const result = await invoke<ResetCreditConsumeResult>(
-        'consume_profile_reset_credit',
-        {
-          profileId: resetCreditsProfile.id,
-          creditId,
-          idempotencyKey,
-        },
-      );
+      const result = await invoke<ResetCreditConsumeResult>('consume_profile_reset_credit', {
+        profileId: resetCreditsProfile.id,
+        creditId,
+        idempotencyKey,
+      });
       setResetCredits(result.credits);
       setResetCreditsProfile(result.profile);
       setStatus((current) =>
@@ -444,19 +409,14 @@ export function useAccountManager(product: AccountProduct) {
       await refresh();
     } catch (error) {
       const message = appError(error);
-      if (!force && message.includes('工具外'))
-        setConfirm({ kind: 'force-switch', profile });
+      if (!force && message.includes('工具外')) setConfirm({ kind: 'force-switch', profile });
       else toast.error(message);
     } finally {
       setBusy(null);
     }
   }
 
-  async function setGrokRelayEnabled(
-    profile: Profile,
-    enabled: boolean,
-    force = false,
-  ) {
+  async function setGrokRelayEnabled(profile: Profile, enabled: boolean, force = false) {
     setBusy(`relay:${profile.id}`);
     try {
       const next = await invoke<AppStatus>('set_grok_relay_enabled', {
@@ -481,10 +441,7 @@ export function useAccountManager(product: AccountProduct) {
 
   async function openCli(profile: Profile) {
     if (!capabilities.openCliFromAccount) return;
-    if (
-      !gatewayStatus?.enabled &&
-      profile.upstreamProtocol !== 'openaiResponses'
-    ) {
+    if (!gatewayStatus?.enabled && profile.upstreamProtocol !== 'openaiResponses') {
       setConfirm({ kind: 'enable-gateway', profile, action: 'open-cli' });
       return;
     }
@@ -530,9 +487,7 @@ export function useAccountManager(product: AccountProduct) {
       await refresh();
       if (action === 'open-cli') {
         await invoke('open_codex_cli_with_profile', { profileId: profile.id });
-        toast.success(
-          `已启用网关模式，并使用 ${profile.alias} 打开 Codex CLI。`,
-        );
+        toast.success(`已启用网关模式，并使用 ${profile.alias} 打开 Codex CLI。`);
       } else {
         toast.success(`已启用网关模式并切换到 ${profile.alias}。`);
       }
@@ -592,8 +547,7 @@ export function useAccountManager(product: AccountProduct) {
 
   function changeAlias(value: string) {
     setAlias(value);
-    if (oauthUrl)
-      void invoke('update_oauth_alias', { alias: value }).catch(() => {});
+    if (oauthUrl) void invoke('update_oauth_alias', { alias: value }).catch(() => {});
   }
 
   async function fetchPiRelayModels() {
@@ -609,9 +563,7 @@ export function useAccountManager(product: AccountProduct) {
       });
       setRelayModels(models);
       setDefaultModelId((current) =>
-        models.some((model) => model.id === current)
-          ? current
-          : (models[0]?.id ?? null),
+        models.some((model) => model.id === current) ? current : (models[0]?.id ?? null),
       );
       toast.success(`已获取 ${models.length} 个模型。`);
     } catch (error) {
@@ -692,26 +644,15 @@ export function useAccountManager(product: AccountProduct) {
               product,
               modelProfileId: customModelEnabled ? modelProfileId : null,
               defaultModelId:
-                product === 'pi'
-                  ? defaultModelId
-                  : customModelEnabled
-                    ? defaultModelId
-                    : null,
-              upstreamProtocol:
-                product === 'codex' || product === 'pi'
-                  ? upstreamProtocol
-                  : null,
+                product === 'pi' ? defaultModelId : customModelEnabled ? defaultModelId : null,
+              upstreamProtocol: product === 'codex' || product === 'pi' ? upstreamProtocol : null,
               upstreamAuthMode: product === 'codex' ? upstreamAuthMode : null,
-              anthropicMaxTokens:
-                product === 'codex' ? anthropicMaxTokens : null,
+              anthropicMaxTokens: product === 'codex' ? anthropicMaxTokens : null,
               relayModels:
                 product === 'pi' && defaultModelId
                   ? relayModels.some((model) => model.id === defaultModelId)
                     ? relayModels
-                    : [
-                        ...relayModels,
-                        { id: defaultModelId, name: defaultModelId },
-                      ]
+                    : [...relayModels, { id: defaultModelId, name: defaultModelId }]
                   : null,
             });
       closeAddDialog();
@@ -735,24 +676,18 @@ export function useAccountManager(product: AccountProduct) {
             product,
           }),
           product === 'pi'
-            ? invoke<{ models: PiRelayModel[]; defaultModelId: string }>(
-                'get_pi_relay_models',
-                {
-                  profileId: profile.id,
-                },
-              )
+            ? invoke<{ models: PiRelayModel[]; defaultModelId: string }>('get_pi_relay_models', {
+                profileId: profile.id,
+              })
             : null,
         ]);
         if (
           (product === 'codex' || product === 'claude' || product === 'grok') &&
           !availableModelStatus
         ) {
-          availableModelStatus = await invoke<ModelProfilesStatus>(
-            'get_model_profiles_status',
-            {
-              product,
-            },
-          );
+          availableModelStatus = await invoke<ModelProfilesStatus>('get_model_profiles_status', {
+            product,
+          });
           setModelStatus(availableModelStatus);
         }
         setEditing(profile);
@@ -766,11 +701,8 @@ export function useAccountManager(product: AccountProduct) {
           setRelayModels(piRelay.models);
           setDefaultModelId(piRelay.defaultModelId);
         } else {
-          const assignedProfile = availableModelStatus?.profiles.find(
-            (modelProfile) =>
-              modelProfile.assignments.some(
-                (assignment) => assignment.accountId === profile.id,
-              ),
+          const assignedProfile = availableModelStatus?.profiles.find((modelProfile) =>
+            modelProfile.assignments.some((assignment) => assignment.accountId === profile.id),
           );
           const assignment = assignedProfile?.assignments.find(
             (item) => item.accountId === profile.id,
@@ -814,9 +746,7 @@ export function useAccountManager(product: AccountProduct) {
     setBusy(`edit:${editing.id}`);
     try {
       await invoke(
-        editing.accountType === 'relay'
-          ? 'update_relay_profile'
-          : 'update_profile',
+        editing.accountType === 'relay' ? 'update_relay_profile' : 'update_profile',
         editing.accountType === 'relay'
           ? {
               profileId: editing.id,
@@ -826,26 +756,15 @@ export function useAccountManager(product: AccountProduct) {
               product,
               modelProfileId: customModelEnabled ? modelProfileId : null,
               defaultModelId:
-                product === 'pi'
-                  ? defaultModelId
-                  : customModelEnabled
-                    ? defaultModelId
-                    : null,
-              upstreamProtocol:
-                product === 'codex' || product === 'pi'
-                  ? upstreamProtocol
-                  : null,
+                product === 'pi' ? defaultModelId : customModelEnabled ? defaultModelId : null,
+              upstreamProtocol: product === 'codex' || product === 'pi' ? upstreamProtocol : null,
               upstreamAuthMode: product === 'codex' ? upstreamAuthMode : null,
-              anthropicMaxTokens:
-                product === 'codex' ? anthropicMaxTokens : null,
+              anthropicMaxTokens: product === 'codex' ? anthropicMaxTokens : null,
               relayModels:
                 product === 'pi' && defaultModelId
                   ? relayModels.some((model) => model.id === defaultModelId)
                     ? relayModels
-                    : [
-                        ...relayModels,
-                        { id: defaultModelId, name: defaultModelId },
-                      ]
+                    : [...relayModels, { id: defaultModelId, name: defaultModelId }]
                   : null,
               force,
             }
@@ -853,9 +772,7 @@ export function useAccountManager(product: AccountProduct) {
               product,
               profileId: editing.id,
               alias: editingAlias,
-              ...(product === 'codex' || product === 'grok'
-                ? { authJson: editingAuthJson }
-                : {}),
+              ...(product === 'codex' || product === 'grok' ? { authJson: editingAuthJson } : {}),
             },
       );
       closeEditor();
@@ -940,8 +857,7 @@ export function useAccountManager(product: AccountProduct) {
     confirm,
     resetCreditsProfile,
     resetCredits,
-    quotaProfile:
-      status?.profiles.find((profile) => profile.id === quotaProfileId) ?? null,
+    quotaProfile: status?.profiles.find((profile) => profile.id === quotaProfileId) ?? null,
     activeProfile,
     openAddDialog,
     setAddMode,

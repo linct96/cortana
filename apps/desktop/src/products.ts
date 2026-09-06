@@ -124,13 +124,7 @@ const PRODUCTS: Record<AccountProduct, ProductMeta> = {
   },
 };
 
-export const PRODUCT_ORDER: AccountProduct[] = [
-  'antigravity',
-  'claude',
-  'codex',
-  'grok',
-  'pi',
-];
+export const PRODUCT_ORDER: AccountProduct[] = ['antigravity', 'claude', 'codex', 'grok', 'pi'];
 
 export function productMeta(product: AccountProduct) {
   return PRODUCTS[product];
@@ -140,10 +134,7 @@ export function productName(product: AccountProduct) {
   return PRODUCTS[product].name;
 }
 
-export function productSupportsPath(
-  product: AccountProduct,
-  path: ProductPath,
-) {
+export function productSupportsPath(product: AccountProduct, path: ProductPath) {
   if (path === '/accounts') return true;
   const key = path.slice(1) as Exclude<
     keyof ProductCapabilities,

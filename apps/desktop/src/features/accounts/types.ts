@@ -25,10 +25,7 @@ export type Profile = {
   updatedAt: number;
 };
 
-export type UpstreamProtocol =
-  | 'openaiResponses'
-  | 'openaiChatCompletions'
-  | 'anthropicMessages';
+export type UpstreamProtocol = 'openaiResponses' | 'openaiChatCompletions' | 'anthropicMessages';
 export type UpstreamAuthMode = 'bearer' | 'xApiKey';
 
 export type CodexGatewayStatus = {
@@ -71,11 +68,7 @@ export type ResetCredits = {
   credits: ResetCredit[];
 };
 
-export type ResetCreditConsumeOutcome =
-  | 'reset'
-  | 'alreadyRedeemed'
-  | 'nothingToReset'
-  | 'noCredit';
+export type ResetCreditConsumeOutcome = 'reset' | 'alreadyRedeemed' | 'nothingToReset' | 'noCredit';
 
 export type ResetCreditConsumeResult = {
   outcome: ResetCreditConsumeOutcome;
@@ -137,8 +130,7 @@ export type UsageWindow = {
 export function usageWindowLabel(minutes: number | null) {
   if (minutes === 300) return '5h额度';
   if (minutes === 10_080) return '周额度';
-  if (minutes !== null && minutes >= 28 * 1_440 && minutes <= 32 * 1_440)
-    return '月额度';
+  if (minutes !== null && minutes >= 28 * 1_440 && minutes <= 32 * 1_440) return '月额度';
   return '剩余额度';
 }
 
@@ -156,13 +148,7 @@ export type AppStatus = {
 };
 
 export type OAuthProgress = {
-  stage:
-    | 'browser_opening'
-    | 'waiting'
-    | 'exchanging'
-    | 'success'
-    | 'error'
-    | 'cancelled';
+  stage: 'browser_opening' | 'waiting' | 'exchanging' | 'success' | 'error' | 'cancelled';
   message: string;
   profile: Profile | null;
 };
