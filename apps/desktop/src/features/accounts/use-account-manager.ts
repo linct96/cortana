@@ -2,6 +2,7 @@ import type { FormEvent } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { invoke, listenOAuthProgress } from '../../backend';
+import { productMeta } from '../../products';
 import { appError } from '../../utils';
 import type { ModelProfilesStatus } from '../models/types';
 import { resetCreditOutcomeNotice } from './types';
@@ -12,6 +13,7 @@ import type {
   CodexGatewayStatus,
   OAuthProgress,
   PendingConfirm,
+  PiRelayModel,
   Profile,
   ResetCreditConsumeResult,
   ResetCredits,
@@ -21,16 +23,20 @@ import type {
 } from './types';
 
 export function useAccountManager(product: AccountProduct) {
+  const capabilities = productMeta(product).capabilities;
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [gatewayStatus, setGatewayStatus] = useState<CodexGatewayStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [addMode, setAddMode] = useState<AddMode>('browser');
+  const [codexProfiles, setCodexProfiles] = useState<Profile[]>([]);
+  const [selectedCodexProfileId, setSelectedCodexProfileId] = useState('');
   const [alias, setAlias] = useState('');
   const [authJson, setAuthJson] = useState('');
   const [relayApiKey, setRelayApiKey] = useState('');
   const [relayApiBaseUrl, setRelayApiBaseUrl] = useState('');
+  const [relayModels, setRelayModels] = useState<PiRelayModel[]>([]);
   const [upstreamProtocol, setUpstreamProtocol] = useState<UpstreamProtocol>('openaiResponses');
   const [upstreamAuthMode, setUpstreamAuthMode] = useState<UpstreamAuthMode>('bearer');
   const [anthropicMaxTokens, setAnthropicMaxTokens] = useState(16_384);
@@ -88,7 +94,11 @@ export function useAccountManager(product: AccountProduct) {
       return;
     }
     try {
-      setModelStatus(await invoke<ModelProfilesStatus>('get_model_profiles_status', { product }));
+      setModelStatus(
+        await invoke<ModelProfilesStatus>('get_model_profiles_status', {
+          product,
+        }),
+      );
     } catch (error) {
       toast.error(appError(error));
     }
@@ -98,7 +108,9 @@ export function useAccountManager(product: AccountProduct) {
     async (profile: Profile) => {
       try {
         if (profile.accountType === 'oauth' && product !== 'claude') {
-          await invoke<UsageRefreshResult>('refresh_profile_usage', { profileId: profile.id });
+          await invoke<UsageRefreshResult>('refresh_profile_usage', {
+            profileId: profile.id,
+          });
         }
       } catch (error) {
         toast.error(`账号已添加，但信息刷新失败：${appError(error)}`);
@@ -172,12 +184,36 @@ export function useAccountManager(product: AccountProduct) {
   const activeProfile =
     status?.detectedProfile ?? status?.profiles.find((profile) => profile.isActive) ?? null;
 
+  async function openAddDialog() {
+    if (product !== 'pi') {
+      setAddOpen(true);
+      return;
+    }
+    setAddOpen(true);
+    setBusy('codex-profiles');
+    try {
+      const codex = await invoke<AppStatus>('get_app_status', {
+        product: 'codex',
+      });
+      const profiles = codex.profiles.filter((profile) => profile.accountType === 'oauth');
+      setCodexProfiles(profiles);
+      setSelectedCodexProfileId(profiles[0]?.id ?? '');
+    } catch (error) {
+      toast.error(appError(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function closeAddDialog() {
     setAddOpen(false);
+    setCodexProfiles([]);
+    setSelectedCodexProfileId('');
     setAlias('');
     setAuthJson('');
     setRelayApiKey('');
     setRelayApiBaseUrl('');
+    setRelayModels([]);
     setUpstreamProtocol('openaiResponses');
     setUpstreamAuthMode('bearer');
     setAnthropicMaxTokens(16_384);
@@ -196,6 +232,7 @@ export function useAccountManager(product: AccountProduct) {
     setEditingAuthJson('');
     setEditingRelayApiKey('');
     setEditingRelayApiBaseUrl('');
+    setRelayModels([]);
     setUpstreamProtocol('openaiResponses');
     setUpstreamAuthMode('bearer');
     setAnthropicMaxTokens(16_384);
@@ -218,6 +255,7 @@ export function useAccountManager(product: AccountProduct) {
   }
 
   async function refreshAllAccounts() {
+    if (!capabilities.refreshAllAccounts) return;
     const profiles = (status?.profiles ?? []).filter(
       (profile) =>
         profile.accountType === 'oauth' &&
@@ -231,7 +269,9 @@ export function useAccountManager(product: AccountProduct) {
     setBusy('refresh:all');
     const results = await Promise.allSettled(
       profiles.map((profile) =>
-        invoke<UsageRefreshResult>('refresh_profile_usage', { profileId: profile.id }),
+        invoke<UsageRefreshResult>('refresh_profile_usage', {
+          profileId: profile.id,
+        }),
       ),
     );
     await refresh();
@@ -245,7 +285,7 @@ export function useAccountManager(product: AccountProduct) {
   }
 
   async function refreshAccount(profile: Profile) {
-    if (profile.accountType === 'relay') return;
+    if (!capabilities.refreshAccount || profile.accountType === 'relay') return;
     if (product === 'claude' && !profile.isRenewable) {
       toast.info('此 Token 无法续期，请重新进行浏览器授权。');
       return;
@@ -288,7 +328,10 @@ export function useAccountManager(product: AccountProduct) {
               ...current,
               profiles: current.profiles.map((item) =>
                 item.id === profile.id
-                  ? { ...item, resetCreditsAvailableCount: result.availableCount }
+                  ? {
+                      ...item,
+                      resetCreditsAvailableCount: result.availableCount,
+                    }
                   : item,
               ),
             }
@@ -346,7 +389,11 @@ export function useAccountManager(product: AccountProduct) {
     }
     setBusy(`switch:${profile.id}`);
     try {
-      await invoke<Profile>('switch_profile', { product, profileId: profile.id, force });
+      await invoke<Profile>('switch_profile', {
+        product,
+        profileId: profile.id,
+        force,
+      });
       toast.success(
         product === 'antigravity'
           ? `已切换到 ${profile.alias}，新启动的 agy 会话生效。`
@@ -354,7 +401,9 @@ export function useAccountManager(product: AccountProduct) {
             ? `已切换到 ${profile.alias}，新启动的 claude 会话生效。`
             : product === 'grok'
               ? `已切换到 ${profile.alias}，新启动的 Grok 会话生效。`
-              : `已切换到 ${profile.alias}，模型配置将在新启动的 Codex 会话生效。`,
+              : product === 'pi'
+                ? `已切换到 ${profile.alias}，新启动的 Pi 会话生效。`
+                : `已切换到 ${profile.alias}，模型配置将在新启动的 Codex 会话生效。`,
       );
       setConfirm(null);
       await refresh();
@@ -391,6 +440,7 @@ export function useAccountManager(product: AccountProduct) {
   }
 
   async function openCli(profile: Profile) {
+    if (!capabilities.openCliFromAccount) return;
     if (!gatewayStatus?.enabled && profile.upstreamProtocol !== 'openaiResponses') {
       setConfirm({ kind: 'enable-gateway', profile, action: 'open-cli' });
       return;
@@ -451,7 +501,10 @@ export function useAccountManager(product: AccountProduct) {
   async function importCurrent() {
     setBusy('import');
     try {
-      const profile = await invoke<Profile>('import_current_profile', { product, alias: null });
+      const profile = await invoke<Profile>('import_current_profile', {
+        product,
+        alias: null,
+      });
       toast.success(`已同步 ${profile.alias}。`);
       await refresh();
     } catch (error) {
@@ -462,6 +515,7 @@ export function useAccountManager(product: AccountProduct) {
   }
 
   async function generateOAuthLink() {
+    if (!capabilities.browserOAuth) return;
     setBusy('oauth:prepare');
     setOauthMessage('正在生成授权链接并打开。');
     setCallbackUrl('');
@@ -496,8 +550,55 @@ export function useAccountManager(product: AccountProduct) {
     if (oauthUrl) void invoke('update_oauth_alias', { alias: value }).catch(() => {});
   }
 
+  async function fetchPiRelayModels() {
+    const apiKey = editing ? editingRelayApiKey : relayApiKey;
+    const apiBaseUrl = editing ? editingRelayApiBaseUrl : relayApiBaseUrl;
+    if (!apiKey.trim() || !apiBaseUrl.trim()) return;
+    setBusy('relay-models');
+    try {
+      const models = await invoke<PiRelayModel[]>('probe_pi_relay_models', {
+        apiKey,
+        apiBaseUrl,
+        upstreamProtocol,
+      });
+      setRelayModels(models);
+      setDefaultModelId((current) =>
+        models.some((model) => model.id === current) ? current : (models[0]?.id ?? null),
+      );
+      toast.success(`已获取 ${models.length} 个模型。`);
+    } catch (error) {
+      toast.error(appError(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function submitAdd(event: FormEvent) {
     event.preventDefault();
+    if (product === 'pi' && addMode !== 'relay') {
+      if (!selectedCodexProfileId) return;
+      setBusy('import-codex');
+      try {
+        const profile = await invoke<Profile>('import_codex_profile_to_pi', {
+          codexProfileId: selectedCodexProfileId,
+          alias: alias || null,
+        });
+        closeAddDialog();
+        toast.success(`已从 Codex 导入 ${profile.alias}。`);
+        await refreshNewAccount(profile);
+      } catch (error) {
+        toast.error(appError(error));
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
+    if (
+      (addMode === 'browser' && !capabilities.browserOAuth) ||
+      (addMode === 'paste' && !capabilities.pasteCredential) ||
+      (addMode === 'relay' && !capabilities.relay)
+    )
+      return;
     if (addMode === 'browser') {
       if (!callbackUrl.trim()) return;
       setBusy('oauth:complete');
@@ -542,10 +643,17 @@ export function useAccountManager(product: AccountProduct) {
               activate: false,
               product,
               modelProfileId: customModelEnabled ? modelProfileId : null,
-              defaultModelId: customModelEnabled ? defaultModelId : null,
-              upstreamProtocol: product === 'codex' ? upstreamProtocol : null,
+              defaultModelId:
+                product === 'pi' ? defaultModelId : customModelEnabled ? defaultModelId : null,
+              upstreamProtocol: product === 'codex' || product === 'pi' ? upstreamProtocol : null,
               upstreamAuthMode: product === 'codex' ? upstreamAuthMode : null,
               anthropicMaxTokens: product === 'codex' ? anthropicMaxTokens : null,
+              relayModels:
+                product === 'pi' && defaultModelId
+                  ? relayModels.some((model) => model.id === defaultModelId)
+                    ? relayModels
+                    : [...relayModels, { id: defaultModelId, name: defaultModelId }]
+                  : null,
             });
       closeAddDialog();
       toast.success(`已添加 ${profile.alias}。`);
@@ -562,10 +670,17 @@ export function useAccountManager(product: AccountProduct) {
       setBusy(`edit:${profile.id}`);
       let availableModelStatus = modelStatus;
       try {
-        const apiKey = await invoke<string>('get_relay_api_key', {
-          profileId: profile.id,
-          product,
-        });
+        const [apiKey, piRelay] = await Promise.all([
+          invoke<string>('get_relay_api_key', {
+            profileId: profile.id,
+            product,
+          }),
+          product === 'pi'
+            ? invoke<{ models: PiRelayModel[]; defaultModelId: string }>('get_pi_relay_models', {
+                profileId: profile.id,
+              })
+            : null,
+        ]);
         if (
           (product === 'codex' || product === 'claude' || product === 'grok') &&
           !availableModelStatus
@@ -582,15 +697,20 @@ export function useAccountManager(product: AccountProduct) {
         setUpstreamProtocol(profile.upstreamProtocol);
         setUpstreamAuthMode(profile.upstreamAuthMode);
         setAnthropicMaxTokens(profile.anthropicMaxTokens);
-        const assignedProfile = availableModelStatus?.profiles.find((modelProfile) =>
-          modelProfile.assignments.some((assignment) => assignment.accountId === profile.id),
-        );
-        const assignment = assignedProfile?.assignments.find(
-          (item) => item.accountId === profile.id,
-        );
-        setCustomModelEnabled(Boolean(assignedProfile));
-        setModelProfileId(assignedProfile?.id ?? null);
-        setDefaultModelId(assignment?.defaultModelId ?? null);
+        if (piRelay) {
+          setRelayModels(piRelay.models);
+          setDefaultModelId(piRelay.defaultModelId);
+        } else {
+          const assignedProfile = availableModelStatus?.profiles.find((modelProfile) =>
+            modelProfile.assignments.some((assignment) => assignment.accountId === profile.id),
+          );
+          const assignment = assignedProfile?.assignments.find(
+            (item) => item.accountId === profile.id,
+          );
+          setCustomModelEnabled(Boolean(assignedProfile));
+          setModelProfileId(assignedProfile?.id ?? null);
+          setDefaultModelId(assignment?.defaultModelId ?? null);
+        }
       } catch (error) {
         toast.error(appError(error));
       } finally {
@@ -606,7 +726,10 @@ export function useAccountManager(product: AccountProduct) {
     setBusy(`edit:${profile.id}`);
     try {
       setEditingAuthJson(
-        await invoke<string>('get_profile_auth', { profileId: profile.id, product }),
+        await invoke<string>('get_profile_auth', {
+          profileId: profile.id,
+          product,
+        }),
       );
       setEditing(profile);
       setEditingAlias(profile.alias);
@@ -632,10 +755,17 @@ export function useAccountManager(product: AccountProduct) {
               apiBaseUrl: editingRelayApiBaseUrl,
               product,
               modelProfileId: customModelEnabled ? modelProfileId : null,
-              defaultModelId: customModelEnabled ? defaultModelId : null,
-              upstreamProtocol: product === 'codex' ? upstreamProtocol : null,
+              defaultModelId:
+                product === 'pi' ? defaultModelId : customModelEnabled ? defaultModelId : null,
+              upstreamProtocol: product === 'codex' || product === 'pi' ? upstreamProtocol : null,
               upstreamAuthMode: product === 'codex' ? upstreamAuthMode : null,
               anthropicMaxTokens: product === 'codex' ? anthropicMaxTokens : null,
+              relayModels:
+                product === 'pi' && defaultModelId
+                  ? relayModels.some((model) => model.id === defaultModelId)
+                    ? relayModels
+                    : [...relayModels, { id: defaultModelId, name: defaultModelId }]
+                  : null,
               force,
             }
           : {
@@ -693,16 +823,20 @@ export function useAccountManager(product: AccountProduct) {
 
   return {
     product,
+    capabilities,
     status,
     gatewayStatus,
     loading,
     busy,
     addOpen,
     addMode,
+    codexProfiles,
+    selectedCodexProfileId,
     alias,
     authJson,
     relayApiKey,
     relayApiBaseUrl,
+    relayModels,
     upstreamProtocol,
     upstreamAuthMode,
     anthropicMaxTokens,
@@ -725,12 +859,14 @@ export function useAccountManager(product: AccountProduct) {
     resetCredits,
     quotaProfile: status?.profiles.find((profile) => profile.id === quotaProfileId) ?? null,
     activeProfile,
-    setAddOpen,
+    openAddDialog,
     setAddMode,
+    setSelectedCodexProfileId,
     setAlias: changeAlias,
     setAuthJson,
     setRelayApiKey,
     setRelayApiBaseUrl,
+    setRelayModels,
     setUpstreamProtocol,
     setUpstreamAuthMode,
     setAnthropicMaxTokens,
@@ -761,6 +897,7 @@ export function useAccountManager(product: AccountProduct) {
     setGatewayMode,
     enableGatewayAndUse,
     importCurrent,
+    fetchPiRelayModels,
     generateOAuthLink,
     openOAuthLink,
     submitAdd,

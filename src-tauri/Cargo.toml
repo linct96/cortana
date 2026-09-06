@@ -38,6 +38,7 @@ toml_edit = "0.25"
 tiny_http = "0.12"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+filetime = "0.2"
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }

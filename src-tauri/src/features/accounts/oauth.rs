@@ -246,6 +246,7 @@ pub(crate) fn build_authorize_url(
         AccountProduct::Claude => claude::CLAUDE_OAUTH_AUTHORIZE_URL,
         AccountProduct::Antigravity => ANTIGRAVITY_OAUTH_AUTHORIZE_URL,
         AccountProduct::Grok => return Err("Grok 使用 Device Code 授权。".to_string()),
+        AccountProduct::Pi => return Err("Pi 一期不支持 OAuth 添加。".to_string()),
     };
     let mut url = Url::parse(authorize_url).map_err(|error| error.to_string())?;
     {
@@ -257,7 +258,7 @@ pub(crate) fn build_authorize_url(
                 AccountProduct::Codex => OAUTH_CLIENT_ID,
                 AccountProduct::Claude => claude::CLAUDE_OAUTH_CLIENT_ID,
                 AccountProduct::Antigravity => ANTIGRAVITY_OAUTH_CLIENT_ID,
-                AccountProduct::Grok => unreachable!(),
+                AccountProduct::Grok | AccountProduct::Pi => unreachable!(),
             },
         );
         query.append_pair("redirect_uri", callback_url);
@@ -267,7 +268,7 @@ pub(crate) fn build_authorize_url(
                 AccountProduct::Codex => OAUTH_SCOPE,
                 AccountProduct::Claude => claude::CLAUDE_OAUTH_SCOPE,
                 AccountProduct::Antigravity => ANTIGRAVITY_OAUTH_SCOPE,
-                AccountProduct::Grok => unreachable!(),
+                AccountProduct::Grok | AccountProduct::Pi => unreachable!(),
             },
         );
         query.append_pair("code_challenge", &challenge);
@@ -287,7 +288,7 @@ pub(crate) fn build_authorize_url(
                 query.append_pair("prompt", "consent");
                 query.append_pair("include_granted_scopes", "true");
             }
-            AccountProduct::Grok => unreachable!(),
+            AccountProduct::Grok | AccountProduct::Pi => unreachable!(),
         }
     }
     Ok(url.into())
@@ -549,6 +550,7 @@ pub(crate) fn complete_oauth_callback(
             .inspect_err(|_| clear_pending_oauth(state))?,
         ),
         AccountProduct::Grok => return Err("Grok 使用 Device Code 授权。".to_string()),
+        AccountProduct::Pi => return Err("Pi 一期不支持 OAuth 添加。".to_string()),
     };
     let mut pending_guard = state
         .pending_oauth
@@ -747,16 +749,7 @@ pub(crate) fn identity_from_auth_json(auth: &Value) -> Identity {
 }
 
 pub(crate) fn identity_from_id_token(token: &str) -> Identity {
-    let mut identity = identity_from_jwt(token);
-    identity.name = decode_jwt_claims(token)
-        .and_then(|claims| {
-            claims
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_default();
-    identity
+    identity_from_jwt(token)
 }
 
 pub(crate) fn identity_from_jwt(token: &str) -> Identity {
@@ -789,9 +782,21 @@ pub(crate) fn identity_from_jwt(token: &str) -> Identity {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let name = claims
+        .as_ref()
+        .and_then(|claims| {
+            claims.get("name").or_else(|| {
+                claims
+                    .get("https://api.openai.com/profile")
+                    .and_then(|profile| profile.get("name"))
+            })
+        })
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     Identity {
         account_id,
-        name: String::new(),
+        name,
         email,
         plan_type,
     }
@@ -802,8 +807,14 @@ pub(crate) fn chatgpt_user_id_from_auth_json(auth: &Value) -> String {
     ["id_token", "access_token"]
         .into_iter()
         .filter_map(|key| tokens?.get(key)?.as_str())
-        .find_map(|token| {
-            let claims = decode_jwt_claims(token)?;
+        .map(chatgpt_user_id_from_jwt)
+        .find(|user_id| !user_id.is_empty())
+        .unwrap_or_default()
+}
+
+pub(crate) fn chatgpt_user_id_from_jwt(token: &str) -> String {
+    decode_jwt_claims(token)
+        .and_then(|claims| {
             let auth = claims.get("https://api.openai.com/auth")?.as_object()?;
             auth.get("chatgpt_user_id")
                 .or_else(|| auth.get("user_id"))?
@@ -848,6 +859,7 @@ pub(crate) fn exchange_code(
                 }
                 AccountProduct::Antigravity => ANTIGRAVITY_OAUTH_CLIENT_ID,
                 AccountProduct::Grok => return Err("Grok 使用 Device Code 授权。".to_string()),
+                AccountProduct::Pi => return Err("Pi 一期不支持 OAuth 添加。".to_string()),
             },
         ),
         ("code_verifier", verifier),
@@ -861,6 +873,7 @@ pub(crate) fn exchange_code(
             AccountProduct::Claude => return Err("Claude 使用 JSON OAuth token 请求。".to_string()),
             AccountProduct::Antigravity => ANTIGRAVITY_OAUTH_TOKEN_URL,
             AccountProduct::Grok => return Err("Grok 使用 Device Code 授权。".to_string()),
+            AccountProduct::Pi => return Err("Pi 一期不支持 OAuth 添加。".to_string()),
         })
         .header("Accept", "application/json")
         .form(&form)

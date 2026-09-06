@@ -1340,6 +1340,7 @@ fn detected_profile(credential: &CurrentCredential) -> Result<ProfileSummary, St
     Ok(ProfileSummary {
         id: "detected".to_string(),
         product: AccountProduct::Grok,
+        provider_key: String::new(),
         account_type,
         api_base_url,
         upstream_protocol: "openaiResponses".to_string(),

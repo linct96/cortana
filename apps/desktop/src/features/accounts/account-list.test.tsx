@@ -7,6 +7,7 @@ import type { Profile } from './types';
 const profile: Profile = {
   id: 'account-1',
   product: 'grok',
+  providerKey: '',
   accountType: 'relay',
   apiBaseUrl: 'https://relay.example/v1',
   upstreamProtocol: 'openaiResponses',

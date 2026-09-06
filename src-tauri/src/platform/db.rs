@@ -34,6 +34,7 @@ pub(crate) fn initialize_database(state: &AppState) -> Result<(), String> {
             CREATE TABLE IF NOT EXISTS accounts (
               id TEXT PRIMARY KEY NOT NULL,
               product TEXT NOT NULL,
+              provider_key TEXT NOT NULL DEFAULT '',
               account_type TEXT NOT NULL,
               api_base_url TEXT,
               account_id TEXT NOT NULL DEFAULT '',
@@ -80,10 +81,16 @@ pub(crate) fn initialize_database(state: &AppState) -> Result<(), String> {
                 AND account_id <> '' AND chatgpt_user_id <> '';
             CREATE UNIQUE INDEX IF NOT EXISTS accounts_oauth_account_identity_uq
               ON accounts(product, account_id)
-              WHERE product <> 'codex' AND account_type = 'oauth' AND account_id <> '';
+              WHERE product <> 'codex' AND (product <> 'pi' OR provider_key <> 'openai-codex')
+                AND account_type = 'oauth' AND account_id <> '';
             CREATE UNIQUE INDEX IF NOT EXISTS accounts_oauth_email_identity_uq
               ON accounts(product, email COLLATE NOCASE)
-              WHERE product <> 'codex' AND account_type = 'oauth' AND email <> '';
+              WHERE product <> 'codex' AND (product <> 'pi' OR provider_key <> 'openai-codex')
+                AND account_type = 'oauth' AND email <> '';
+            CREATE UNIQUE INDEX IF NOT EXISTS accounts_pi_codex_oauth_identity_uq
+              ON accounts(product, provider_key, account_id, chatgpt_user_id)
+              WHERE product = 'pi' AND provider_key = 'openai-codex' AND account_type = 'oauth'
+                AND account_id <> '' AND chatgpt_user_id <> '';
             CREATE UNIQUE INDEX IF NOT EXISTS accounts_relay_identity_uq
               ON accounts(product, api_base_url, account_id)
               WHERE account_type = 'relay' AND api_base_url IS NOT NULL AND account_id <> '';
@@ -91,6 +98,7 @@ pub(crate) fn initialize_database(state: &AppState) -> Result<(), String> {
         )
         .map_err(database_error)?;
     migrate_account_gateway_schema(&connection)?;
+    migrate_account_provider_schema(&connection)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -123,6 +131,39 @@ fn migrate_account_gateway_schema(connection: &Connection) -> Result<(), String>
             DROP INDEX IF EXISTS accounts_relay_identity_uq;
             CREATE UNIQUE INDEX accounts_relay_identity_uq
               ON accounts(product, api_base_url, account_id, upstream_protocol, upstream_auth_mode)
+              WHERE account_type = 'relay' AND api_base_url IS NOT NULL AND account_id <> '';
+            ",
+        )
+        .map_err(database_error)
+}
+
+fn migrate_account_provider_schema(connection: &Connection) -> Result<(), String> {
+    if !account_column_exists(connection, "provider_key")? {
+        connection
+            .execute_batch("ALTER TABLE accounts ADD COLUMN provider_key TEXT NOT NULL DEFAULT '';")
+            .map_err(database_error)?;
+    }
+    connection
+        .execute_batch(
+            "
+            DROP INDEX IF EXISTS accounts_oauth_account_identity_uq;
+            DROP INDEX IF EXISTS accounts_oauth_email_identity_uq;
+            DROP INDEX IF EXISTS accounts_pi_codex_oauth_identity_uq;
+            DROP INDEX IF EXISTS accounts_relay_identity_uq;
+            CREATE UNIQUE INDEX accounts_oauth_account_identity_uq
+              ON accounts(product, provider_key, account_id)
+              WHERE product <> 'codex' AND (product <> 'pi' OR provider_key <> 'openai-codex')
+                AND account_type = 'oauth' AND account_id <> '';
+            CREATE UNIQUE INDEX accounts_oauth_email_identity_uq
+              ON accounts(product, provider_key, email COLLATE NOCASE)
+              WHERE product <> 'codex' AND (product <> 'pi' OR provider_key <> 'openai-codex')
+                AND account_type = 'oauth' AND email <> '';
+            CREATE UNIQUE INDEX accounts_pi_codex_oauth_identity_uq
+              ON accounts(product, provider_key, account_id, chatgpt_user_id)
+              WHERE product = 'pi' AND provider_key = 'openai-codex' AND account_type = 'oauth'
+                AND account_id <> '' AND chatgpt_user_id <> '';
+            CREATE UNIQUE INDEX accounts_relay_identity_uq
+              ON accounts(product, provider_key, api_base_url, account_id, upstream_protocol, upstream_auth_mode)
               WHERE account_type = 'relay' AND api_base_url IS NOT NULL AND account_id <> '';
             ",
         )
@@ -239,7 +280,8 @@ pub(crate) fn set_web_access_settings(
 #[cfg(test)]
 mod tests {
     use super::{
-        account_column_exists, get_setting, migrate_account_gateway_schema, set_web_access_settings,
+        account_column_exists, get_setting, migrate_account_gateway_schema,
+        migrate_account_provider_schema, set_web_access_settings,
     };
     use rusqlite::Connection;
 
@@ -260,6 +302,46 @@ mod tests {
             get_setting(&connection, "web_access_port").unwrap(),
             Some("11456".to_string())
         );
+    }
+
+    #[test]
+    fn migrates_account_provider_schema_idempotently() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE accounts (
+                  id TEXT PRIMARY KEY NOT NULL,
+                  product TEXT NOT NULL,
+                  account_type TEXT NOT NULL,
+                  api_base_url TEXT,
+                  account_id TEXT NOT NULL DEFAULT '',
+                  chatgpt_user_id TEXT NOT NULL DEFAULT '',
+                  email TEXT NOT NULL DEFAULT '',
+                  upstream_protocol TEXT NOT NULL DEFAULT 'openaiResponses',
+                  upstream_auth_mode TEXT NOT NULL DEFAULT 'bearer'
+                );
+                CREATE UNIQUE INDEX accounts_oauth_account_identity_uq
+                  ON accounts(product, account_id)
+                  WHERE product <> 'codex' AND account_type = 'oauth' AND account_id <> '';
+                CREATE UNIQUE INDEX accounts_oauth_email_identity_uq
+                  ON accounts(product, email COLLATE NOCASE)
+                  WHERE product <> 'codex' AND account_type = 'oauth' AND email <> '';
+                CREATE UNIQUE INDEX accounts_relay_identity_uq
+                  ON accounts(product, api_base_url, account_id, upstream_protocol, upstream_auth_mode)
+                  WHERE account_type = 'relay' AND api_base_url IS NOT NULL AND account_id <> '';
+                ",
+            )
+            .unwrap();
+
+        migrate_account_provider_schema(&connection).unwrap();
+        migrate_account_provider_schema(&connection).unwrap();
+        assert!(account_column_exists(&connection, "provider_key").unwrap());
+
+        connection.execute("INSERT INTO accounts (id, product, provider_key, account_type, account_id, chatgpt_user_id) VALUES ('a', 'pi', 'openai-codex', 'oauth', 'A', 'U1')", []).unwrap();
+        connection.execute("INSERT INTO accounts (id, product, provider_key, account_type, account_id, chatgpt_user_id) VALUES ('b', 'pi', 'openai-codex', 'oauth', 'A', 'U2')", []).unwrap();
+        connection.execute("INSERT INTO accounts (id, product, provider_key, account_type, account_id) VALUES ('other', 'pi', 'other', 'oauth', 'A')", []).unwrap();
+        assert!(connection.execute("INSERT INTO accounts (id, product, provider_key, account_type, account_id, chatgpt_user_id) VALUES ('c', 'pi', 'openai-codex', 'oauth', 'A', 'U1')", []).is_err());
     }
 
     #[test]

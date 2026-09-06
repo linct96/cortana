@@ -36,8 +36,14 @@ const statusStyles: Record<
   { icon: ComponentType<{ size?: number }>; iconClass: string }
 > = {
   managed: { icon: CircleCheck, iconClass: 'bg-primary/10 text-primary' },
-  unmanaged: { icon: CircleAlert, iconClass: 'bg-secondary text-secondary-foreground' },
-  missing: { icon: CircleAlert, iconClass: 'bg-secondary text-secondary-foreground' },
+  unmanaged: {
+    icon: CircleAlert,
+    iconClass: 'bg-secondary text-secondary-foreground',
+  },
+  missing: {
+    icon: CircleAlert,
+    iconClass: 'bg-secondary text-secondary-foreground',
+  },
 };
 
 export default function AccountsPage() {
@@ -54,7 +60,7 @@ function ProductAccountsPage({ product }: { product: AccountProduct }) {
         title="账号"
         actions={
           <>
-            {product === 'codex' && (
+            {account.capabilities.gateway && (
               <label className="flex items-center gap-2 text-sm font-medium">
                 网关模式
                 <Switch
@@ -64,32 +70,34 @@ function ProductAccountsPage({ product }: { product: AccountProduct }) {
                 />
               </label>
             )}
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex" />}>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  type="button"
-                  onClick={() => void account.refreshAllAccounts()}
-                  disabled={account.loading || account.busy === 'refresh:all'}
-                >
-                  <RefreshCw
-                    size={18}
-                    className={
-                      account.loading || account.busy === 'refresh:all' ? 'animate-spin' : ''
-                    }
-                  />
-                  <span className="sr-only">刷新</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {account.product === 'claude' ? '更新全部登录令牌' : '刷新全部'}
-              </TooltipContent>
-            </Tooltip>
+            {account.capabilities.refreshAllAccounts && (
+              <Tooltip>
+                <TooltipTrigger render={<span className="inline-flex" />}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    type="button"
+                    onClick={() => void account.refreshAllAccounts()}
+                    disabled={account.loading || account.busy === 'refresh:all'}
+                  >
+                    <RefreshCw
+                      size={18}
+                      className={
+                        account.loading || account.busy === 'refresh:all' ? 'animate-spin' : ''
+                      }
+                    />
+                    <span className="sr-only">刷新</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {account.product === 'claude' ? '更新全部登录令牌' : '刷新全部'}
+                </TooltipContent>
+              </Tooltip>
+            )}
             <Button
               type="button"
-              onClick={() => account.setAddOpen(true)}
-              disabled={account.busy === 'oauth' || account.busy === 'import'}
+              onClick={() => void account.openAddDialog()}
+              disabled={account.busy !== null}
             >
               <Plus data-icon="inline-start" /> 添加账号
             </Button>
@@ -151,16 +159,17 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                       : account.status?.authState.kind === 'missing'
                         ? account.product === 'claude'
                           ? '未检测到 settings.json 中的 Claude 凭据'
-                          : '未检测到 auth.json'
+                          : account.product === 'pi'
+                            ? '请先在 Pi 中运行 /login 并登录 OpenAI (ChatGPT Plus/Pro)'
+                            : '未检测到 auth.json'
                         : '导入当前登录态后即可管理'}
                   </span>
                 )}
-                {(account.product === 'claude' || account.product === 'antigravity') &&
-                  account.status?.authPath && (
-                    <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
-                      {account.status.authPath}
-                    </span>
-                  )}
+                {account.capabilities.showAuthPath && account.status?.authPath && (
+                  <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
+                    {account.status.authPath}
+                  </span>
+                )}
               </div>
               {account.status &&
                 account.status.authState.kind !== 'managed' &&
@@ -183,8 +192,7 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                   </Button>
                 )}
             </div>
-            {account.product !== 'claude' &&
-              account.product !== 'antigravity' &&
+            {account.capabilities.usage &&
               account.activeProfile?.accountType === 'oauth' &&
               !account.status?.detectedProfile && (
                 <div className="min-w-0 border-l pl-(--card-spacing)">
@@ -197,8 +205,8 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
                   />
                 </div>
               )}
-            {account.product !== 'grok' &&
-              account.product !== 'antigravity' &&
+            {account.capabilities.relay &&
+              account.product !== 'grok' &&
               account.activeProfile?.accountType === 'relay' &&
               account.activeProfile.apiBaseUrl && (
                 <div className="min-w-0 border-l pl-(--card-spacing)">
@@ -259,29 +267,39 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
               </div>
             </DragDropProvider>
           ) : (
-            <EmptyState onAdd={() => account.setAddOpen(true)} />
+            <EmptyState
+              product={account.product}
+              onAdd={() => void account.openAddDialog()}
+              onImportCurrent={() => void account.importCurrent()}
+              importDisabled={account.status.authState.kind === 'missing'}
+            />
           )}
         </div>
       </section>
 
-      {account.addOpen && (
-        <AddAccountDialog
-          {...account}
-          onGenerateOAuth={account.generateOAuthLink}
-          onOpenOAuth={() => void account.openOAuthLink()}
-          onSubmit={account.submitAdd}
-          onClose={() =>
-            account.busy === 'oauth' ||
-            account.busy?.startsWith('oauth:') ||
-            Boolean(account.oauthUrl)
-              ? void account.cancelOAuth()
-              : account.busy !== 'auth-json' &&
-                account.busy !== 'relay' &&
-                account.busy !== 'import' &&
-                account.closeAddDialog()
-          }
-        />
-      )}
+      {(account.product === 'pi' ||
+        account.capabilities.browserOAuth ||
+        account.capabilities.pasteCredential ||
+        account.capabilities.relay) &&
+        account.addOpen && (
+          <AddAccountDialog
+            {...account}
+            onFetchPiRelayModels={account.fetchPiRelayModels}
+            onGenerateOAuth={account.generateOAuthLink}
+            onOpenOAuth={() => void account.openOAuthLink()}
+            onSubmit={account.submitAdd}
+            onClose={() =>
+              account.busy === 'oauth' ||
+              account.busy?.startsWith('oauth:') ||
+              Boolean(account.oauthUrl)
+                ? void account.cancelOAuth()
+                : account.busy !== 'auth-json' &&
+                  account.busy !== 'relay' &&
+                  account.busy !== 'import' &&
+                  account.closeAddDialog()
+            }
+          />
+        )}
       {account.editing && (
         <EditAccountDialog
           editing={account.editing}
@@ -290,6 +308,7 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           authJson={account.editingAuthJson}
           relayApiKey={account.editingRelayApiKey}
           relayApiBaseUrl={account.editingRelayApiBaseUrl}
+          relayModels={account.relayModels}
           upstreamProtocol={account.upstreamProtocol}
           upstreamAuthMode={account.upstreamAuthMode}
           anthropicMaxTokens={account.anthropicMaxTokens}
@@ -302,6 +321,7 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           setAuthJson={account.setEditingAuthJson}
           setRelayApiKey={account.setEditingRelayApiKey}
           setRelayApiBaseUrl={account.setEditingRelayApiBaseUrl}
+          setRelayModels={account.setRelayModels}
           setUpstreamProtocol={account.setUpstreamProtocol}
           setUpstreamAuthMode={account.setUpstreamAuthMode}
           setAnthropicMaxTokens={account.setAnthropicMaxTokens}
@@ -309,6 +329,7 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
           setCustomModelEnabled={account.setCustomModelEnabled}
           setModelProfileId={account.setModelProfileId}
           setDefaultModelId={account.setDefaultModelId}
+          onFetchPiRelayModels={account.fetchPiRelayModels}
           onSubmit={account.saveProfile}
           onClose={account.closeEditor}
         />
@@ -375,19 +396,52 @@ function AccountContent({ account }: { account: ReturnType<typeof useAccountMana
   );
 }
 
-function EmptyState({ onAdd }: { onAdd?: () => void }) {
+function EmptyState({
+  product,
+  onAdd,
+  onImportCurrent,
+  importDisabled,
+}: {
+  product: AccountProduct;
+  onAdd?: () => void;
+  onImportCurrent?: () => void;
+  importDisabled?: boolean;
+}) {
+  const pi = product === 'pi';
   return (
     <Empty className="min-h-52 rounded-none border-y">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <LogIn />
         </EmptyMedia>
-        <EmptyTitle>还没有账户档案</EmptyTitle>
+        <EmptyTitle>{pi ? '尚未保存 Pi 账号' : '还没有账户档案'}</EmptyTitle>
       </EmptyHeader>
       <EmptyContent>
-        <Button variant="secondary" className="text-primary" type="button" onClick={onAdd}>
-          <Plus data-icon="inline-start" /> 添加账号
-        </Button>
+        {pi ? (
+          <>
+            <p className="max-w-md text-center text-sm text-muted-foreground">
+              从 Cortana 的 Codex 账号导入，或同步 Pi 当前登录的 OpenAI 账号。
+            </p>
+            <div className="flex gap-2">
+              <Button variant="secondary" type="button" onClick={onAdd}>
+                <Plus data-icon="inline-start" /> 添加账号
+              </Button>
+              <Button
+                variant="secondary"
+                className="text-primary"
+                type="button"
+                onClick={onImportCurrent}
+                disabled={importDisabled}
+              >
+                <LogIn data-icon="inline-start" /> 同步当前账号
+              </Button>
+            </div>
+          </>
+        ) : (
+          <Button variant="secondary" className="text-primary" type="button" onClick={onAdd}>
+            <Plus data-icon="inline-start" /> 添加账号
+          </Button>
+        )}
       </EmptyContent>
     </Empty>
   );

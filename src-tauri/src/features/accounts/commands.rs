@@ -27,7 +27,7 @@ use crate::{
                 usage_refresh_settings, ACTIVE_REFRESH_MINUTES, INACTIVE_REFRESH_MINUTES,
             },
         },
-        grok,
+        grok, pi,
     },
 };
 use rusqlite::{params, OptionalExtension};
@@ -44,6 +44,7 @@ pub(crate) async fn get_app_status(
         AccountProduct::Claude => claude::app_status(&app, &state),
         AccountProduct::Antigravity => antigravity::app_status(&app, &state),
         AccountProduct::Grok => grok::app_status(&app, &state),
+        AccountProduct::Pi => pi::app_status(&app, &state),
     })
     .await
     .map_err(|error| error.to_string())?
@@ -63,6 +64,7 @@ pub(crate) async fn switch_profile(
             AccountProduct::Claude => claude::switch_profile(&state, &profile_id, force)?,
             AccountProduct::Antigravity => antigravity::switch_profile(&state, &profile_id, force)?,
             AccountProduct::Grok => grok::switch_profile(&state, &profile_id, force)?,
+            AccountProduct::Pi => pi::switch_profile(&state, &profile_id, force)?,
         };
         refresh_tray(&app)?;
         Ok(profile)
@@ -135,6 +137,7 @@ pub(crate) async fn import_current_profile(
                 AccountProduct::Claude => claude::import_current_profile(&state, alias)?,
                 AccountProduct::Antigravity => antigravity::import_current_profile(&state, alias)?,
                 AccountProduct::Grok => grok::import_current_profile(&state, alias)?,
+                AccountProduct::Pi => pi::import_current_profile(&state, alias)?,
                 AccountProduct::Codex => unreachable!(),
             };
             refresh_tray(&app)?;
@@ -203,6 +206,43 @@ pub(crate) async fn import_current_profile(
     .map_err(|error| error.to_string())?
 }
 
+pub(crate) async fn import_codex_profile_to_pi(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    codex_profile_id: String,
+    alias: Option<String>,
+) -> Result<ProfileSummary, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let profile = pi::import_codex_profile(&state, &codex_profile_id, alias)?;
+        refresh_tray(&app)?;
+        Ok(profile)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) async fn probe_pi_relay_models(
+    state: State<'_, AppState>,
+    api_key: String,
+    api_base_url: String,
+    upstream_protocol: UpstreamProtocol,
+) -> Result<Vec<pi::PiRelayModel>, String> {
+    let _state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        pi::probe_relay_models(&api_base_url, &api_key, upstream_protocol)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) fn get_pi_relay_models(
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<pi::PiRelayConfiguration, String> {
+    pi::relay_models(&state, &profile_id)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn add_relay_profile(
     app: tauri::AppHandle,
@@ -217,6 +257,7 @@ pub(crate) fn add_relay_profile(
     upstream_protocol: Option<UpstreamProtocol>,
     upstream_auth_mode: Option<UpstreamAuthMode>,
     anthropic_max_tokens: Option<i64>,
+    relay_models: Option<Vec<pi::PiRelayModel>>,
 ) -> Result<ProfileSummary, String> {
     let (upstream_protocol, upstream_auth_mode, anthropic_max_tokens) =
         default_gateway_settings(upstream_protocol, upstream_auth_mode, anthropic_max_tokens);
@@ -262,6 +303,15 @@ pub(crate) fn add_relay_profile(
         AccountProduct::Antigravity => {
             return Err("Antigravity 仅支持浏览器 OAuth 账户。".to_string());
         }
+        AccountProduct::Pi => pi::add_relay_profile(
+            &state,
+            &api_key,
+            &api_base_url,
+            alias.trim(),
+            upstream_protocol,
+            relay_models.ok_or_else(|| "请配置中转站模型。".to_string())?,
+            default_model_id.as_deref().unwrap_or_default(),
+        )?,
     };
     if matches!(product, AccountProduct::Codex | AccountProduct::Claude) {
         models::set_account_model_profile(
@@ -277,6 +327,7 @@ pub(crate) fn add_relay_profile(
             AccountProduct::Codex => switch_profile_internal(&state, &profile.id, true)?,
             AccountProduct::Claude => claude::switch_profile(&state, &profile.id, true)?,
             AccountProduct::Grok => grok::switch_profile(&state, &profile.id, true)?,
+            AccountProduct::Pi => pi::switch_profile(&state, &profile.id, true)?,
             AccountProduct::Antigravity => unreachable!(),
         }
     } else {
@@ -324,6 +375,7 @@ pub(crate) async fn refresh_profile_usage(
                     refreshed: true,
                 })
             }
+            "pi" => pi::refresh_profile_usage(&state, &profile_id),
             _ => Err("不支持该账户类型。".to_string()),
         }
     })
@@ -336,6 +388,9 @@ pub(crate) fn get_profile_auth(
     profile_id: String,
     product: AccountProduct,
 ) -> Result<String, String> {
+    if product == AccountProduct::Pi {
+        return Err("Pi 一期不提供原始凭据编辑。".to_string());
+    }
     if product == AccountProduct::Grok {
         return grok::profile_auth_json(&state, &profile_id);
     }
@@ -348,6 +403,9 @@ pub(crate) fn get_relay_api_key(
     profile_id: String,
     product: AccountProduct,
 ) -> Result<String, String> {
+    if product == AccountProduct::Pi {
+        return pi::relay_api_key(&state, &profile_id);
+    }
     let connection = open_database(&state)?;
     relay_api_key_for_profile(&connection, &profile_id, product)
 }
@@ -379,6 +437,7 @@ pub(crate) fn update_profile(
                 .as_deref()
                 .ok_or_else(|| "缺少 auth.json。".to_string())?,
         )?,
+        AccountProduct::Pi => pi::update_alias(&state, &profile_id, &alias)?,
     };
     refresh_tray(&app)?;
     Ok(profile)
@@ -399,6 +458,7 @@ pub(crate) fn update_relay_profile(
     upstream_protocol: Option<UpstreamProtocol>,
     upstream_auth_mode: Option<UpstreamAuthMode>,
     anthropic_max_tokens: Option<i64>,
+    relay_models: Option<Vec<pi::PiRelayModel>>,
 ) -> Result<ProfileSummary, String> {
     let (upstream_protocol, upstream_auth_mode, anthropic_max_tokens) =
         default_gateway_settings(upstream_protocol, upstream_auth_mode, anthropic_max_tokens);
@@ -457,6 +517,16 @@ pub(crate) fn update_relay_profile(
         AccountProduct::Antigravity => {
             return Err("Antigravity 仅支持浏览器 OAuth 账户。".to_string());
         }
+        AccountProduct::Pi => pi::update_relay_profile(
+            &state,
+            &profile_id,
+            &alias,
+            api_key.as_deref(),
+            &api_base_url,
+            upstream_protocol,
+            relay_models.ok_or_else(|| "请配置中转站模型。".to_string())?,
+            default_model_id.as_deref().unwrap_or_default(),
+        )?,
     };
     refresh_tray(&app)?;
     Ok(profile)
@@ -514,6 +584,9 @@ pub(crate) fn delete_profile(
         grok::delete_profile(&state, &profile_id)?;
         return refresh_tray(&app);
     }
+    if product == AccountProduct::Pi {
+        pi::remove_relay_provider(&state, &profile_id)?;
+    }
     if product == AccountProduct::Claude {
         claude::clear_active_profile(&state, &profile_id)?;
     }
@@ -569,6 +642,7 @@ pub(crate) fn active_product(state: &AppState) -> Result<AccountProduct, String>
             Some("claude") => AccountProduct::Claude,
             Some("antigravity") => AccountProduct::Antigravity,
             Some("grok") => AccountProduct::Grok,
+            Some("pi") => AccountProduct::Pi,
             _ => AccountProduct::Codex,
         },
     )

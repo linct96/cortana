@@ -3,6 +3,7 @@ import type { AccountProduct } from '../../components/app-shell-context';
 export type Profile = {
   id: string;
   product: AccountProduct;
+  providerKey: string;
   accountType: 'oauth' | 'relay';
   apiBaseUrl: string | null;
   upstreamProtocol: UpstreamProtocol;
@@ -85,7 +86,10 @@ export function resetCreditOutcomeNotice(outcome: ResetCreditConsumeOutcome): {
     case 'alreadyRedeemed':
       return { kind: 'success', message: '重置已完成，额度已刷新。' };
     case 'nothingToReset':
-      return { kind: 'info', message: '当前没有可重置的额度窗口，重置卡未消耗。' };
+      return {
+        kind: 'info',
+        message: '当前没有可重置的额度窗口，重置卡未消耗。',
+      };
     case 'noCredit':
       return { kind: 'info', message: '已无可用重置卡。' };
   }
@@ -155,6 +159,8 @@ export type PendingConfirm =
   | { kind: 'force-grok-edit'; profile: Profile }
   | { kind: 'enable-gateway'; profile: Profile; action: 'switch' | 'open-cli' }
   | null;
+
+export type PiRelayModel = { id: string; name: string };
 
 export type AddMode = 'browser' | 'paste' | 'relay';
 

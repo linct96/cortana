@@ -1,4 +1,7 @@
 import { createContext, type Dispatch, type SetStateAction, useContext } from 'react';
+import type { AccountProduct } from '../products';
+
+export { productName, type AccountProduct } from '../products';
 
 export type MainPath =
   | '/accounts'
@@ -7,8 +10,6 @@ export type MainPath =
   | '/prompts'
   | '/models'
   | '/config';
-export type AccountProduct = 'codex' | 'claude' | 'antigravity' | 'grok';
-
 export type AppShellContextValue = {
   topPadding: string;
   previousMainPath: MainPath;
@@ -26,14 +27,4 @@ export function useAppShell() {
   const context = useContext(AppShellContext);
   if (!context) throw new Error('useAppShell must be used within AppShell');
   return context;
-}
-
-export function productName(product: AccountProduct) {
-  return product === 'claude'
-    ? 'Claude'
-    : product === 'antigravity'
-      ? 'Antigravity'
-      : product === 'grok'
-        ? 'Grok'
-        : 'Codex';
 }

@@ -56,6 +56,7 @@ pub(crate) async fn list_sessions(
                 capabilities(product),
             )
         }
+        AccountProduct::Pi => Err("Pi 一期不支持会话管理。".to_string()),
     })
     .await
     .map_err(|error| error.to_string())?
@@ -139,12 +140,14 @@ pub(super) fn capabilities(product: AccountProduct) -> SessionCapabilities {
             can_archive: false,
             can_delete: true,
         },
-        AccountProduct::Claude | AccountProduct::Antigravity => SessionCapabilities {
-            supports_archived: false,
-            can_rename: false,
-            can_archive: false,
-            can_delete: false,
-        },
+        AccountProduct::Claude | AccountProduct::Antigravity | AccountProduct::Pi => {
+            SessionCapabilities {
+                supports_archived: false,
+                can_rename: false,
+                can_archive: false,
+                can_delete: false,
+            }
+        }
     }
 }
 

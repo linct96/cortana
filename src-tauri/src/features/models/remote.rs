@@ -45,7 +45,9 @@ pub(super) fn normalize_models(
                 Some(slot)
             }
             AccountProduct::Codex | AccountProduct::Grok => None,
-            AccountProduct::Antigravity => return Err("该产品暂不支持自定义模型。".to_string()),
+            AccountProduct::Antigravity | AccountProduct::Pi => {
+                return Err("该产品暂不支持自定义模型。".to_string())
+            }
         };
         result.push(ModelEntry {
             id: id.to_string(),
@@ -93,7 +95,7 @@ pub(super) fn fetch_relay_models_internal(
     let url = match product {
         AccountProduct::Codex | AccountProduct::Grok => format!("{base_url}/models"),
         AccountProduct::Claude => format!("{base_url}/v1/models"),
-        AccountProduct::Antigravity => unreachable!(),
+        AccountProduct::Antigravity | AccountProduct::Pi => unreachable!(),
     };
     let client = Client::builder()
         .timeout(Duration::from_secs(15))

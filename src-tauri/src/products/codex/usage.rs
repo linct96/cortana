@@ -298,6 +298,13 @@ pub(crate) fn fetch_account_usage(
     } else {
         account_id.to_string()
     };
+    fetch_account_usage_with_token(access_token, &account_id)
+}
+
+pub(crate) fn fetch_account_usage_with_token(
+    access_token: &str,
+    account_id: &str,
+) -> Result<AccountUsage, CodexApiError> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -312,7 +319,7 @@ pub(crate) fn fetch_account_usage(
         .header("Accept", "application/json")
         .header("User-Agent", "codex_cli_rs");
     if !account_id.is_empty() {
-        request = request.header("ChatGPT-Account-ID", &account_id);
+        request = request.header("ChatGPT-Account-ID", account_id);
     }
     let response = request.send().map_err(|error| CodexApiError {
         message: format!("账户信息查询失败：{error}"),

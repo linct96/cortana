@@ -50,6 +50,7 @@ pub(super) fn aggregate_usage(
             parse_antigravity(home_dir(state).join(".gemini/antigravity-cli"))
         }
         AccountProduct::Grok => parse_grok(home_dir(state).join(".grok"), start_date),
+        AccountProduct::Pi => return Err("Pi 一期不支持统计分析。".to_string()),
     };
     finish_analytics(state, parsed, range, today)
 }

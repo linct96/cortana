@@ -998,6 +998,7 @@ fn detected_oauth_profile(token: &str) -> ProfileSummary {
     ProfileSummary {
         id: "detected".to_string(),
         product: AccountProduct::Claude,
+        provider_key: String::new(),
         account_type: ACCOUNT_TYPE_OAUTH.to_string(),
         api_base_url: None,
         upstream_protocol: "openaiResponses".to_string(),
@@ -1024,6 +1025,7 @@ fn detected_relay_profile(api_base_url: &str, auth_token: &str) -> ProfileSummar
     ProfileSummary {
         id: "detected".to_string(),
         product: AccountProduct::Claude,
+        provider_key: String::new(),
         account_type: ACCOUNT_TYPE_RELAY.to_string(),
         api_base_url: Some(api_base_url.to_string()),
         upstream_protocol: "openaiResponses".to_string(),

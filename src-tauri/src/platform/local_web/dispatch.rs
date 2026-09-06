@@ -92,6 +92,15 @@ pub(super) async fn dispatch_command(
             )
             .await
         ),
+        "import_codex_profile_to_pi" => result!(
+            accounts::import_codex_profile_to_pi(
+                app.clone(),
+                app.state(),
+                arg(&args, "codexProfileId")?,
+                optional(&args, "alias")?
+            )
+            .await
+        ),
         "import_auth_json" => result!(
             oauth::import_auth_json(
                 app.clone(),
@@ -102,6 +111,19 @@ pub(super) async fn dispatch_command(
             )
             .await
         ),
+        "probe_pi_relay_models" => result!(
+            accounts::probe_pi_relay_models(
+                app.state(),
+                arg(&args, "apiKey")?,
+                arg(&args, "apiBaseUrl")?,
+                arg(&args, "upstreamProtocol")?
+            )
+            .await
+        ),
+        "get_pi_relay_models" => result!(accounts::get_pi_relay_models(
+            app.state(),
+            arg(&args, "profileId")?
+        )),
         "add_relay_profile" => result!(accounts::add_relay_profile(
             app.clone(),
             app.state(),
@@ -114,7 +136,8 @@ pub(super) async fn dispatch_command(
             optional(&args, "defaultModelId")?,
             optional(&args, "upstreamProtocol")?,
             optional(&args, "upstreamAuthMode")?,
-            optional(&args, "anthropicMaxTokens")?
+            optional(&args, "anthropicMaxTokens")?,
+            optional(&args, "relayModels")?
         )),
         "refresh_profile_usage" => {
             result!(accounts::refresh_profile_usage(app.state(), arg(&args, "profileId")?).await)
@@ -174,7 +197,8 @@ pub(super) async fn dispatch_command(
             arg(&args, "force")?,
             optional(&args, "upstreamProtocol")?,
             optional(&args, "upstreamAuthMode")?,
-            optional(&args, "anthropicMaxTokens")?
+            optional(&args, "anthropicMaxTokens")?,
+            optional(&args, "relayModels")?
         )),
         "get_model_profiles_status" => {
             result!(models::get_model_profiles_status(app.state(), arg(&args, "product")?).await)
