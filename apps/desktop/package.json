@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev:web": "vite",
-    "build:web": "tsc -b && vite build"
+    "build:web": "tsc -b && vite build",
+    "format": "oxfmt --write ."
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
