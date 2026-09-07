@@ -815,6 +815,8 @@ fn set_default_model(
     let path = settings_path(state);
     let _lock = PiAuthLock::acquire(&path)?;
     let mut settings = read_json_storage(&path, "settings.json")?;
+    let provider_changed =
+        settings.get("defaultProvider").and_then(Value::as_str) != Some(provider_key);
     settings.insert(
         "defaultProvider".to_string(),
         Value::String(provider_key.to_string()),
@@ -824,7 +826,7 @@ fn set_default_model(
             "defaultModel".to_string(),
             Value::String(model_id.to_string()),
         );
-    } else {
+    } else if provider_changed {
         settings.remove("defaultModel");
     }
     write_json_storage(&path, &settings)
@@ -1199,6 +1201,38 @@ mod tests {
         assert!(models["providers"].get(&profile.provider_key).is_none());
         assert!(models["providers"].get("other").is_some());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn preserves_default_model_only_when_staying_with_the_same_provider() {
+        let directory =
+            std::env::temp_dir().join(format!("cortana-pi-settings-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(directory.join(".pi/agent")).unwrap();
+        let state = AppState {
+            database_path: directory.join("app.sqlite3"),
+            default_codex_home: directory.join(".codex"),
+            pending_oauth: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        };
+        fs::write(settings_path(&state), r#"{"theme":"dark"}"#).unwrap();
+
+        set_default_model(&state, PI_PROVIDER_OPENAI_CODEX, None).unwrap();
+        let settings = read_json_storage(&settings_path(&state), "settings.json").unwrap();
+        assert_eq!(settings["defaultProvider"], PI_PROVIDER_OPENAI_CODEX);
+        assert!(!settings.contains_key("defaultModel"));
+
+        set_default_model(&state, PI_PROVIDER_OPENAI_CODEX, Some("gpt-6-astra")).unwrap();
+        set_default_model(&state, PI_PROVIDER_OPENAI_CODEX, None).unwrap();
+        let settings = read_json_storage(&settings_path(&state), "settings.json").unwrap();
+        assert_eq!(settings["defaultModel"], "gpt-6-astra");
+        assert_eq!(settings["theme"], "dark");
+
+        set_default_model(&state, "relay", Some("relay-model")).unwrap();
+        set_default_model(&state, PI_PROVIDER_OPENAI_CODEX, None).unwrap();
+        let settings = read_json_storage(&settings_path(&state), "settings.json").unwrap();
+        assert_eq!(settings["defaultProvider"], PI_PROVIDER_OPENAI_CODEX);
+        assert!(!settings.contains_key("defaultModel"));
+        assert_eq!(settings["theme"], "dark");
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
