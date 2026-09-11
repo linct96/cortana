@@ -66,6 +66,7 @@ pub(super) struct UsageRecord {
     pub(super) turn_count: u64,
     pub(super) model: String,
     pub(super) tokens: TokenUsage,
+    pub(super) reported_cost_usd: Option<f64>,
 }
 
 #[derive(Default)]
@@ -80,6 +81,7 @@ pub(super) struct ModelAccumulator {
     pub(super) tokens: TokenUsage,
     pub(super) sessions: HashSet<String>,
     pub(super) turns: HashSet<String>,
+    pub(super) reported_cost_usd: Option<f64>,
 }
 
 #[derive(Default)]

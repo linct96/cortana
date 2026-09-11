@@ -228,6 +228,7 @@ pub(super) fn parse_antigravity_db(
                 generation.model_id
             },
             tokens,
+            reported_cost_usd: None,
         };
         match records.get(&turn_id) {
             Some(existing)

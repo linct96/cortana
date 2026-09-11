@@ -63,6 +63,7 @@ pub(super) fn parse_grok(default_home: PathBuf, start_date: Option<NaiveDate>) -
                 turn_count: usage["numTurns"].as_u64().unwrap_or_default(),
                 model: UNKNOWN_MODEL.to_string(),
                 tokens,
+                reported_cost_usd: None,
             };
             let models = usage["modelUsage"]
                 .as_object()
@@ -76,6 +77,7 @@ pub(super) fn parse_grok(default_home: PathBuf, start_date: Option<NaiveDate>) -
                         turn_count: value["modelCalls"].as_u64().unwrap_or_default(),
                         model: model.clone(),
                         tokens: grok_tokens(value)?,
+                        reported_cost_usd: None,
                     })
                 })
                 .collect::<Vec<_>>();

@@ -75,6 +75,7 @@ pub(super) fn parse_codex_file(path: &Path) -> Result<Vec<UsageRecord>, ()> {
                     turn_count: u64::from(!turn_id.is_empty()),
                     model: model.clone(),
                     tokens,
+                    reported_cost_usd: None,
                 });
             }
             _ => {}

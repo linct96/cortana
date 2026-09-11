@@ -106,7 +106,7 @@ const PRODUCTS: Record<AccountProduct, ProductMeta> = {
     capabilities: {
       models: false,
       sessions: false,
-      analytics: false,
+      analytics: true,
       prompts: false,
       config: false,
       gateway: false,

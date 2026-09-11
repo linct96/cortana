@@ -3,6 +3,7 @@ use super::{
     claude::parse_claude,
     codex::parse_codex,
     grok::parse_grok,
+    pi::parse_pi,
     types::{
         AnalyticsAccumulator, ModelUsage, ParsedUsage, TokenUsage, UsageAnalytics, UsageBucket,
         UsageRange,
@@ -50,7 +51,7 @@ pub(super) fn aggregate_usage(
             parse_antigravity(home_dir(state).join(".gemini/antigravity-cli"))
         }
         AccountProduct::Grok => parse_grok(home_dir(state).join(".grok"), start_date),
-        AccountProduct::Pi => return Err("Pi 一期不支持统计分析。".to_string()),
+        AccountProduct::Pi => parse_pi(state, start_date)?,
     };
     finish_analytics(state, parsed, range, today)
 }
@@ -100,6 +101,9 @@ pub(super) fn finish_analytics(
         }
         let usage = analytics.models.entry(record.model).or_default();
         usage.tokens.add(&record.tokens);
+        if let Some(cost) = record.reported_cost_usd {
+            *usage.reported_cost_usd.get_or_insert(0.0) += cost;
+        }
         usage.sessions.insert(record.session_id.clone());
         add_turns(
             &mut usage.turns,
@@ -116,14 +120,16 @@ pub(super) fn finish_analytics(
         .models
         .into_iter()
         .map(|(model, usage)| {
-            let estimated_cost = billing::estimated_cost(
-                &pricing,
-                &model,
-                usage.tokens.input_tokens,
-                usage.tokens.cached_input_tokens,
-                usage.tokens.cache_write_input_tokens,
-                usage.tokens.output_tokens,
-            );
+            let estimated_cost = usage.reported_cost_usd.or_else(|| {
+                billing::estimated_cost(
+                    &pricing,
+                    &model,
+                    usage.tokens.input_tokens,
+                    usage.tokens.cached_input_tokens,
+                    usage.tokens.cache_write_input_tokens,
+                    usage.tokens.output_tokens,
+                )
+            });
             if let Some(cost) = estimated_cost {
                 estimated_cost_usd += cost;
             } else {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { productMeta, productSupportsPath } from './products';
 
-it('limits Pi to account management', () => {
+it('enables Pi analytics while keeping other sections limited', () => {
   const pi = productMeta('pi');
   expect(pi.name).toBe('Pi');
   expect(pi.capabilities.importCurrent).toBe(true);
@@ -9,7 +9,9 @@ it('limits Pi to account management', () => {
   expect(pi.capabilities.refreshAccount).toBe(true);
   expect(pi.capabilities.refreshAllAccounts).toBe(true);
   expect(pi.capabilities.showAuthPath).toBe(true);
-  for (const path of ['/analytics', '/sessions', '/prompts', '/models', '/config'] as const) {
+  expect(pi.capabilities.analytics).toBe(true);
+  expect(productSupportsPath('pi', '/analytics')).toBe(true);
+  for (const path of ['/sessions', '/prompts', '/models', '/config'] as const) {
     expect(productSupportsPath('pi', path)).toBe(false);
   }
 });

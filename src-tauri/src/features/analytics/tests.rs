@@ -1,4 +1,5 @@
 use super::{
+    aggregate::finish_analytics,
     antigravity::{
         parse_antigravity, AntigravityTokenUsage, GenerationMetadata, ProtoTimestamp, StepMetadata,
         StoredGenerationMetadata,
@@ -6,13 +7,19 @@ use super::{
     claude::parse_claude,
     codex::parse_codex_file,
     grok::parse_grok,
-    types::TokenUsage,
+    pi::{collect_pi_session_files, parse_pi_file},
+    types::{ParsedUsage, TokenUsage, UsageRange, UNKNOWN_MODEL},
 };
+use crate::platform::{db::initialize_database, state::AppState};
 use chrono::{DateTime, Datelike, Local, TimeZone};
 use prost::Message;
 use rusqlite::{params, Connection};
 use serde_json::json;
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 use uuid::Uuid;
 
 fn temp_dir() -> PathBuf {
@@ -27,6 +34,94 @@ fn timestamp() -> DateTime<Local> {
         .with_ymd_and_hms(today.year(), today.month(), today.day(), 1, 0, 0)
         .single()
         .unwrap()
+}
+
+#[test]
+fn pi_session_scan_ignores_nested_artifacts() {
+    let directory = temp_dir();
+    let project = directory.join("project");
+    fs::create_dir_all(project.join("artifacts")).unwrap();
+    fs::write(project.join("session.jsonl"), "").unwrap();
+    fs::write(project.join("artifacts/transcript.jsonl"), "").unwrap();
+
+    let (files, skipped) = collect_pi_session_files(&directory);
+    assert_eq!(files, vec![project.join("session.jsonl")]);
+    assert_eq!(skipped, 0);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn parses_pi_usage_and_reported_cost() {
+    let directory = temp_dir();
+    let path = directory.join("session.jsonl");
+    let usage = |input, output, cache_read, cache_write, total, reasoning, cost| {
+        json!({
+            "input": input,
+            "output": output,
+            "cacheRead": cache_read,
+            "cacheWrite": cache_write,
+            "reasoning": reasoning,
+            "totalTokens": total,
+            "cost": { "total": cost }
+        })
+    };
+    let content = [
+        json!({"type":"session","version":3,"id":"session-a","timestamp":timestamp().to_rfc3339(),"cwd":"/tmp"}),
+        json!({"type":"message","id":"assistant-a","timestamp":timestamp().to_rfc3339(),"message":{"role":"assistant","model":"model-a","usage":usage(10, 4, 3, 2, 19, 1, 0.1)}}),
+        json!({"type":"message","id":"tool-a","timestamp":timestamp().to_rfc3339(),"message":{"role":"toolResult","usage":usage(1, 4, 2, 3, 10, 0, 0.2)}}),
+        json!({"type":"compaction","id":"compact-a","timestamp":timestamp().to_rfc3339(),"usage":usage(5, 1, 0, 0, 6, 0, 0.3)}),
+        json!({"type":"branch_summary","id":"empty-a","timestamp":timestamp().to_rfc3339(),"usage":usage(0, 0, 0, 0, 0, 0, 0.0)}),
+    ]
+    .map(|value| value.to_string())
+    .join("\n");
+    fs::write(&path, content).unwrap();
+
+    let records = parse_pi_file(&path).unwrap();
+    assert_eq!(records.len(), 3);
+    assert!(records
+        .iter()
+        .all(|record| record.session_id == "session-a"));
+    assert_eq!(records[0].model, "model-a");
+    assert_eq!(records[1].model, UNKNOWN_MODEL);
+    assert_eq!(records[0].tokens.input_tokens, 15);
+    assert_eq!(records[0].tokens.reasoning_output_tokens, 1);
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.tokens.total_tokens)
+            .sum::<u64>(),
+        35
+    );
+    assert!(
+        (records
+            .iter()
+            .filter_map(|record| record.reported_cost_usd)
+            .sum::<f64>()
+            - 0.6)
+            .abs()
+            < f64::EPSILON
+    );
+
+    let state = AppState {
+        database_path: directory.join("app.sqlite3"),
+        default_codex_home: directory.join(".codex"),
+        pending_oauth: Arc::new(Mutex::new(None)),
+    };
+    initialize_database(&state).unwrap();
+    let analytics = finish_analytics(
+        &state,
+        ParsedUsage {
+            totals: records.clone(),
+            models: records,
+            skipped_files: 0,
+        },
+        UsageRange::Today,
+        timestamp().date_naive(),
+    )
+    .unwrap();
+    assert!((analytics.estimated_cost_usd - 0.6).abs() < f64::EPSILON);
+    assert_eq!(analytics.unpriced_model_count, 0);
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

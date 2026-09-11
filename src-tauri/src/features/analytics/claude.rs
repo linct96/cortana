@@ -62,6 +62,7 @@ pub(super) fn parse_claude(default_home: PathBuf, start_date: Option<NaiveDate>)
                     .unwrap_or(UNKNOWN_MODEL)
                     .to_string(),
                 tokens,
+                reported_cost_usd: None,
             };
             let key = (session_id, message_id.to_string());
             match messages.get(&key) {
