@@ -2,13 +2,77 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["*.*.*"]
 
 permissions:
   contents: write
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Validate release tag
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "Tag must be a semantic version such as 0.0.1."
+            exit 1
+          }
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "Release tags must point to a commit on main."
+            exit 1
+          }
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cortana/desktop exec oxfmt --check .
+      - run: pnpm --filter @cortana/desktop exec oxlint src
+      - run: pnpm --filter @cortana/desktop exec vitest run
+      - run: pnpm --filter @cortana/desktop build:web
+
+  desktop:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - if: matrix.os == 'macos-14'
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - if: matrix.os == 'macos-14'
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --target ${{ matrix.target }}
+
   build:
+    needs: desktop
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +99,10 @@ jobs:
           workspaces: src-tauri -> target
           key: ${{ matrix.targets }}
       - run: pnpm install --frozen-lockfile
+      - name: Set app version from tag
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: node -e "const fs=require('fs'),p='src-tauri/tauri.conf.json',c=require('./'+p);c.version=process.env.VERSION;fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n')"
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

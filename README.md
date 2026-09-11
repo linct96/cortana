@@ -73,6 +73,19 @@ sh scripts/package-macos.sh
 
 正式发布前还需配置对应平台的代码签名；当前 CI 发布目标为 Windows x64 和 macOS arm64。
 
+## 发布
+
+在 `main` 的目标提交上推送 `X.Y.Z` 格式的 Tag 即可触发正式发布：
+
+```sh
+git switch main
+git pull --ff-only
+git tag 0.0.1
+git push origin 0.0.1
+```
+
+GitHub Actions 会校验 Tag 指向 `main`，依次执行格式、Lint、测试与 Web 构建检查，再将 Tag 版本写入构建配置，并创建包含 Windows x64 与 macOS universal 安装包的 GitHub Release。
+
 ## FAQ / 常见问题
 
 ### macOS 提示“无法验证 Cortana.app 恶意软件”
